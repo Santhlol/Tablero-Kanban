@@ -17,7 +17,6 @@ export class BoardsController {
   @Get(':id') findOne(@Param('id') id: string) { return this.boards.findOne(id); }
   @Delete(':id') remove(@Param('id') id: string) { return this.boards.remove(id); }
 
-  // Endpoint útil para n8n
   @Get(':id/summary')
   async summary(@Param('id') id: string) {
     const [cols, tasks] = await Promise.all([
