@@ -31,4 +31,8 @@ export class ColumnsService {
       return doc;
     });
   }
+
+  async removeByBoard(boardId: string) {
+    await this.model.deleteMany({ boardId });
+  }
 }

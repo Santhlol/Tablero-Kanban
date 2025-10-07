@@ -13,6 +13,9 @@ export const BoardsAPI = {
   get: (id: string) => http.get<BoardSummary>(`/boards/${id}`).then(r => r.data),
   create: (payload: { name: string; owner: string }) =>
     http.post<BoardSummary>('/boards', payload).then(r => r.data),
+  update: (id: string, payload: Partial<Pick<BoardSummary, 'name' | 'owner'>>) =>
+    http.patch<BoardSummary>(`/boards/${id}`, payload).then(r => r.data),
+  remove: (id: string) => http.delete<{ id: string }>(`/boards/${id}`).then(r => r.data),
   summary: (id: string) => http.get(`/boards/${id}/summary`).then(r => r.data),
 };
 

@@ -18,17 +18,14 @@ export const DraggableTask: React.FC<DraggableTaskProps> = ({ task, onOpen }) =>
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.6 : 1,
+    opacity: isDragging ? 0.85 : 1,
+    zIndex: isDragging ? 50 : undefined,
+    boxShadow: isDragging ? '0 12px 32px -12px rgba(15, 23, 42, 0.45)' : undefined,
+    cursor: isDragging ? 'grabbing' : 'grab',
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="cursor-grab active:cursor-grabbing"
-      {...attributes}
-      {...listeners}
-    >
+    <div ref={setNodeRef} style={style} className="active:cursor-grabbing" {...attributes} {...listeners}>
       <TaskCard task={task} onClick={() => onOpen(task)} />
     </div>
   );

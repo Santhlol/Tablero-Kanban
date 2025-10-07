@@ -4,15 +4,21 @@ import type { Column, Task } from '../store/board';
 import { useBoard } from '../store/board';
 import type { BoardSummary } from '../types/board';
 
+type BoardDeletedPayload = { id: string };
+
 type UseRealtimeBoardOptions = {
   boardId?: string;
   onBoardCreated?: (board: BoardSummary) => void;
+  onBoardUpdated?: (board: BoardSummary) => void;
+  onBoardDeleted?: (payload: BoardDeletedPayload) => void;
 };
 
 export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
   // Backward compatibility: if string is passed, treat it as boardId
   const boardId = typeof options === 'string' ? options : options.boardId;
   const onBoardCreated = typeof options === 'object' ? options.onBoardCreated : undefined;
+  const onBoardUpdated = typeof options === 'object' ? options.onBoardUpdated : undefined;
+  const onBoardDeleted = typeof options === 'object' ? options.onBoardDeleted : undefined;
   
   const { upsertTask, removeTask, setBoardId, upsertColumn, removeColumn } = useBoard();
 
@@ -35,6 +41,16 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
         onBoardCreated(board);
       }
     };
+    const onBoardUpdatedEvent = (board: BoardSummary) => {
+      if (onBoardUpdated) {
+        onBoardUpdated(board);
+      }
+    };
+    const onBoardDeletedEvent = (payload: BoardDeletedPayload) => {
+      if (onBoardDeleted) {
+        onBoardDeleted(payload);
+      }
+    };
 
     // Always listen to task and column events (they're board-specific)
     if (boardId) {
@@ -51,9 +67,16 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
     if (onBoardCreated) {
       socket.on('board.created', onBoardCreatedEvent);
     }
+    if (onBoardUpdated) {
+      socket.on('board.updated', onBoardUpdatedEvent);
+    }
+    if (onBoardDeleted) {
+      socket.on('board.deleted', onBoardDeletedEvent);
+    }
 
     return () => {
       if (boardId) {
+        socket.emit('leaveBoard', { boardId });
         socket.off('task.created', onTaskCreated);
         socket.off('task.updated', onTaskUpdated);
         socket.off('task.moved', onTaskMoved);
@@ -66,6 +89,22 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
       if (onBoardCreated) {
         socket.off('board.created', onBoardCreatedEvent);
       }
+      if (onBoardUpdated) {
+        socket.off('board.updated', onBoardUpdatedEvent);
+      }
+      if (onBoardDeleted) {
+        socket.off('board.deleted', onBoardDeletedEvent);
+      }
     };
-  }, [boardId, setBoardId, upsertTask, removeTask, upsertColumn, removeColumn, onBoardCreated]);
+  }, [
+    boardId,
+    setBoardId,
+    upsertTask,
+    removeTask,
+    upsertColumn,
+    removeColumn,
+    onBoardCreated,
+    onBoardUpdated,
+    onBoardDeleted,
+  ]);
 }
