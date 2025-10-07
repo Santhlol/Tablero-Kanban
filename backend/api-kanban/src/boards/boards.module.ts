@@ -5,11 +5,12 @@ import { BoardsService } from './boards.service';
 import { BoardsController } from './boards.controller';
 import { ColumnsModule } from '../columns/columns.module';
 import { TasksModule } from '../tasks/tasks.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: 'Board', schema: BoardSchema }]),
-    ColumnsModule, TasksModule,
+    ColumnsModule, TasksModule, RealtimeModule,
   ],
   providers: [BoardsService],
   controllers: [BoardsController],

@@ -15,7 +15,7 @@ export class BoardsService {
 
   create(dto: CreateBoardDto) {
     return this.model.create(dto).then(doc => {
-      this.events.emitToBoard(String(doc._id), RealtimeEvents.BoardCreated, doc);
+      this.events.emitToAll(RealtimeEvents.BoardCreated, doc);
       return doc;
     });
   }

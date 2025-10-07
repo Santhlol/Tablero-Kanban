@@ -10,6 +10,10 @@ export class KanbanGateway {
     this.server.to(boardId).emit(event, payload);
   }
 
+  emitToAll(event: RealtimeEvents, payload: any) {
+    this.server.emit(event, payload);
+  }
+
   @SubscribeMessage('joinBoard')
   handleJoin(@MessageBody() data: { boardId: string }, @ConnectedSocket() socket: Socket) {
     socket.join(data.boardId);

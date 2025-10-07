@@ -155,6 +155,17 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     const moving = fromList.find(t => t._id === taskId);
     if (!moving) return;
 
+    // Si es la misma columna, ajustar el índice de destino
+    if (fromColumnId === toColumnId) {
+      const currentIndex = fromList.findIndex(t => t._id === taskId);
+      if (currentIndex === -1) return;
+      
+      // Si movemos hacia abajo, el índice de destino debe ajustarse
+      if (currentIndex < destIndex) {
+        destIndex = destIndex - 1;
+      }
+    }
+
     // Calcular nueva posición (before/after)
     const before = toList[destIndex - 1]?.position;
     const after = toList[destIndex]?.position;

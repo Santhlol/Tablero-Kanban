@@ -53,10 +53,22 @@ export const useBoard = create<State>((set) => ({
     }, {} as Record<string, Task[]>)
   }),
   upsertTask: (t) => set(state => {
-    const list = state.tasksByColumn[t.columnId] || [];
-    const without = list.filter(x => x._id !== t._id);
-    const next = [...without, t].sort((a,b)=>a.position-b.position);
-    return { tasksByColumn: { ...state.tasksByColumn, [t.columnId]: next } };
+    // First, remove the task from all columns to prevent duplicates
+    const cleanedTasksByColumn = { ...state.tasksByColumn };
+    Object.keys(cleanedTasksByColumn).forEach(columnId => {
+      cleanedTasksByColumn[columnId] = cleanedTasksByColumn[columnId].filter(task => task._id !== t._id);
+    });
+
+    // Then, add the task to the correct column
+    const targetColumn = cleanedTasksByColumn[t.columnId] || [];
+    const updatedTargetColumn = [...targetColumn, t].sort((a,b)=>a.position-b.position);
+
+    return { 
+      tasksByColumn: { 
+        ...cleanedTasksByColumn, 
+        [t.columnId]: updatedTargetColumn 
+      } 
+    };
   }),
   removeTask: (id, columnId) => set(state => {
     const list = (state.tasksByColumn[columnId] || []).filter(x => x._id !== id);
@@ -64,25 +76,40 @@ export const useBoard = create<State>((set) => ({
   }),
   moveTaskLocally: (taskId, fromColumnId, toColumnId, toPosition) =>
     set(state => {
-      const from = [...(state.tasksByColumn[fromColumnId] || [])].filter(t => t._id !== taskId);
       const moving = (state.tasksByColumn[fromColumnId] || []).find(t => t._id === taskId);
-      const to = [...(state.tasksByColumn[toColumnId] || [])];
-
       if (!moving) return state;
 
       const moved: Task = { ...moving, columnId: toColumnId, position: toPosition };
 
-      // insertar y ordenar
-      to.push(moved);
-      to.sort((a,b)=>a.position-b.position);
+      if (fromColumnId === toColumnId) {
+        // Same column: update position in place
+        const updated = [...(state.tasksByColumn[fromColumnId] || [])].map(t => 
+          t._id === taskId ? moved : t
+        );
+        updated.sort((a,b)=>a.position-b.position);
+        
+        return {
+          tasksByColumn: {
+            ...state.tasksByColumn,
+            [fromColumnId]: updated,
+          }
+        };
+      } else {
+        // Different columns: move between columns
+        const from = [...(state.tasksByColumn[fromColumnId] || [])].filter(t => t._id !== taskId);
+        const to = [...(state.tasksByColumn[toColumnId] || [])];
+        
+        to.push(moved);
+        to.sort((a,b)=>a.position-b.position);
 
-      return {
-        tasksByColumn: {
-          ...state.tasksByColumn,
-          [fromColumnId]: from,
-          [toColumnId]: to,
-        }
-      };
+        return {
+          tasksByColumn: {
+            ...state.tasksByColumn,
+            [fromColumnId]: from,
+            [toColumnId]: to,
+          }
+        };
+      }
     }),
   reset: () => set({ boardId: undefined, columns: [], tasksByColumn: {} }),
 }));

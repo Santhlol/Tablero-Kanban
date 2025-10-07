@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BoardsAPI } from '../api/http';
 import type { BoardSummary } from '../types/board';
+import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 
 type BoardLandingProps = {
   onSelectBoard: (board: BoardSummary) => void;
@@ -18,6 +19,18 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
   const [form, setForm] = useState<BoardForm>({ name: '', owner: '' });
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Handle realtime board creation events
+  const handleBoardCreated = useCallback((newBoard: BoardSummary) => {
+    setBoards(prev => {
+      // Avoid duplicates if the board already exists
+      const exists = prev.some(b => b._id === newBoard._id);
+      if (exists) return prev;
+      return [newBoard, ...prev];
+    });
+  }, []);
+
+  useRealtimeBoard({ onBoardCreated: handleBoardCreated });
 
   const loadBoards = useCallback(async () => {
     setLoading(true);
