@@ -1,27 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { BoardsAPI } from './api/http';
+import { useMemo, useState } from 'react';
+import { BoardLanding } from './pages/BoardLanding';
 import { BoardPage } from './components/BoardPage';
+import type { BoardSummary } from './types/board';
+import { useBoard } from './store/board';
 
 export default function App() {
-  const [boardId, setBoardId] = useState<string | null>(null);
-  const [boards, setBoards] = useState<any[]>([]);
+  const [selectedBoard, setSelectedBoard] = useState<BoardSummary | null>(null);
+  const resetBoard = useBoard(state => state.reset);
 
-  useEffect(() => {
-    (async () => {
-      const all = await BoardsAPI.list();
-      setBoards(all);
-      if (all.length) setBoardId(all[0]._id);
-    })();
-  }, []);
+  const handleOpenBoard = (board: BoardSummary) => {
+    setSelectedBoard(board);
+  };
 
-  if (!boardId) {
-    return (
-      <div style={{ padding: 20 }}>
-        <h3>No hay boards</h3>
-        <p>Crea uno con Postman/Thunder Client en <code>POST /api/boards</code> y recarga.</p>
-      </div>
-    );
+  const handleBackToBoards = () => {
+    resetBoard();
+    setSelectedBoard(null);
+  };
+
+  const board = useMemo(() => selectedBoard, [selectedBoard]);
+
+  if (board) {
+    return <BoardPage board={board} onBack={handleBackToBoards} />;
   }
 
-  return <BoardPage boardId={boardId} />;
+  return <BoardLanding onSelectBoard={handleOpenBoard} />;
 }

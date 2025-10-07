@@ -13,9 +13,10 @@ type State = {
   upsertTask: (t: Task) => void;
   removeTask: (id: string, columnId: string) => void;
   moveTaskLocally: (taskId: string, fromColumnId: string, toColumnId: string, toPosition: number) => void;
+  reset: () => void;
 };
 
-export const useBoard = create<State>((set, get) => ({
+export const useBoard = create<State>((set) => ({
   boardId: undefined,
   columns: [],
   tasksByColumn: {},
@@ -62,4 +63,5 @@ export const useBoard = create<State>((set, get) => ({
         }
       };
     }),
+  reset: () => set({ boardId: undefined, columns: [], tasksByColumn: {} }),
 }));

@@ -17,7 +17,13 @@ export const DraggableTask: React.FC<{ task: Task }> = ({ task }) => {
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="cursor-grab active:cursor-grabbing"
+      {...attributes}
+      {...listeners}
+    >
       <TaskCard task={task} />
     </div>
   );
