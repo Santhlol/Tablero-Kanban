@@ -3,9 +3,11 @@ import type { Task } from '../store/board';
 
 export const TaskCard: React.FC<{ task: Task }> = ({ task }) => {
   return (
-    <div style={{ padding: '8px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', marginBottom: 8 }}>
-      <div style={{ fontWeight: 600 }}>{task.title}</div>
-      {task.description && <div style={{ fontSize: 12, color: '#666' }}>{task.description}</div>}
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300">
+      <div className="text-sm font-semibold text-slate-800">{task.title}</div>
+      {task.description && (
+        <p className="mt-2 text-xs text-slate-500">{task.description}</p>
+      )}
     </div>
   );
 };
