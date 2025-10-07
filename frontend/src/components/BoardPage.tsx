@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
-import { ColumnsAPI, TasksAPI } from '../api/http';
+import { BoardsAPI, ColumnsAPI, TasksAPI } from '../api/http';
 import { useBoard } from '../store/board';
 import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 import { ColumnView } from './Column';
@@ -16,9 +16,11 @@ import { ColumnForm } from './ColumnForm';
 type BoardPageProps = {
   board: BoardSummary;
   onBack: () => void;
+  onBoardUpdate: (board: BoardSummary) => void;
+  onBoardDeleted: (boardId: string) => void;
 };
 
-export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
+export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpdate, onBoardDeleted }) => {
   const boardId = board._id;
   const {
     columns,
@@ -47,7 +49,39 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   >(null);
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
-  useRealtimeBoard(boardId);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(board.name);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [boardActionError, setBoardActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isRenaming) {
+      setRenameValue(board.name);
+    }
+  }, [board.name, isRenaming]);
+
+  const handleRealtimeBoardUpdated = useCallback(
+    (updated: BoardSummary) => {
+      if (updated._id !== boardId) return;
+      onBoardUpdate(updated);
+    },
+    [boardId, onBoardUpdate],
+  );
+
+  const handleRealtimeBoardDeleted = useCallback(
+    (payload: { id: string }) => {
+      if (payload.id !== boardId) return;
+      onBoardDeleted(boardId);
+    },
+    [boardId, onBoardDeleted],
+  );
+
+  useRealtimeBoard({
+    boardId,
+    onBoardUpdated: handleRealtimeBoardUpdated,
+    onBoardDeleted: handleRealtimeBoardDeleted,
+  });
 
   useEffect(() => {
     let alive = true;
@@ -379,6 +413,63 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     }
   };
 
+  const startRenaming = () => {
+    setBoardActionError(null);
+    setRenameValue(board.name);
+    setIsRenaming(true);
+  };
+
+  const cancelRenaming = () => {
+    setBoardActionError(null);
+    setIsRenaming(false);
+    setRenameValue(board.name);
+  };
+
+  const handleRenameSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setBoardActionError('El título del tablero no puede estar vacío.');
+      return;
+    }
+    if (nextName === board.name) {
+      setIsRenaming(false);
+      return;
+    }
+
+    setBoardActionError(null);
+    setRenameBusy(true);
+    try {
+      const updated = await BoardsAPI.update(boardId, { name: nextName });
+      onBoardUpdate(updated);
+      setIsRenaming(false);
+      setRenameValue(nextName);
+    } catch (err) {
+      console.error('Rename board failed', err);
+      setBoardActionError('No se pudo renombrar el tablero. Intenta nuevamente.');
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
+  const handleDeleteBoard = async () => {
+    if (deleteBusy) return;
+    if (!confirm('¿Seguro que deseas eliminar este tablero? Esta acción no se puede deshacer.')) {
+      return;
+    }
+    setBoardActionError(null);
+    setDeleteBusy(true);
+    try {
+      await BoardsAPI.remove(boardId);
+      onBoardDeleted(boardId);
+    } catch (err) {
+      console.error('Delete board failed', err);
+      setBoardActionError('No se pudo eliminar el tablero. Intenta nuevamente.');
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   const handleCreateColumn = async (evt: React.FormEvent) => {
     evt.preventDefault();
     const title = newColumnTitle.trim();
@@ -426,20 +517,73 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
             >
               <span aria-hidden>←</span> Todos los tableros
             </button>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
-              <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              {isRenaming ? (
+                <form onSubmit={handleRenameSubmit} className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={renameValue}
+                    onChange={event => setRenameValue(event.target.value)}
+                    disabled={renameBusy}
+                    autoFocus
+                    className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-lg font-semibold text-slate-900 shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={renameBusy}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                    >
+                      {renameBusy ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelRenaming}
+                      disabled={renameBusy}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
+                  <button
+                    type="button"
+                    onClick={startRenaming}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:border-indigo-300 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2"
+                  >
+                    Editar título
+                  </button>
+                </div>
+              )}
             </div>
+            <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
           </div>
-          <button
-            type="button"
-            onClick={createQuickTask}
-            disabled={!columns.length || quickTaskBusy}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
-          >
-            + Tarea rápida
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={createQuickTask}
+              disabled={!columns.length || quickTaskBusy || deleteBusy}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+            >
+              + Tarea rápida
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteBoard}
+              disabled={deleteBusy}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 shadow-sm transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {deleteBusy ? 'Eliminando...' : 'Eliminar tablero'}
+            </button>
+          </div>
         </header>
+
+        {boardActionError && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{boardActionError}</p>
+        )}
 
         {quickTaskError && (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{quickTaskError}</p>

@@ -19,6 +19,8 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
   const [form, setForm] = useState<BoardForm>({ name: '', owner: '' });
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deletingBoardId, setDeletingBoardId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Handle realtime board creation events
   const handleBoardCreated = useCallback((newBoard: BoardSummary) => {
@@ -30,11 +32,28 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
     });
   }, []);
 
-  useRealtimeBoard({ onBoardCreated: handleBoardCreated });
+  const handleBoardUpdated = useCallback((updatedBoard: BoardSummary) => {
+    setBoards(prev => {
+      const exists = prev.some(board => board._id === updatedBoard._id);
+      if (!exists) return prev;
+      return prev.map(board => (board._id === updatedBoard._id ? { ...board, ...updatedBoard } : board));
+    });
+  }, []);
+
+  const handleBoardDeleted = useCallback((payload: { id: string }) => {
+    setBoards(prev => prev.filter(board => board._id !== payload.id));
+  }, []);
+
+  useRealtimeBoard({
+    onBoardCreated: handleBoardCreated,
+    onBoardUpdated: handleBoardUpdated,
+    onBoardDeleted: handleBoardDeleted,
+  });
 
   const loadBoards = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setDeleteError(null);
     try {
       const data = await BoardsAPI.list();
       setBoards(data);
@@ -72,6 +91,7 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
     }
 
     setFormError(null);
+    setDeleteError(null);
     setCreating(true);
     try {
       const created = await BoardsAPI.create(trimmed);
@@ -85,6 +105,27 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
       setCreating(false);
     }
   };
+
+  const handleDeleteBoard = useCallback(
+    async (boardId: string) => {
+      if (deletingBoardId) return;
+      if (!confirm('¿Seguro que deseas eliminar este tablero? Esta acción no se puede deshacer.')) {
+        return;
+      }
+      setDeleteError(null);
+      setDeletingBoardId(boardId);
+      try {
+        await BoardsAPI.remove(boardId);
+        setBoards(prev => prev.filter(board => board._id !== boardId));
+      } catch (err) {
+        console.error('Error eliminando tablero', err);
+        setDeleteError('No se pudo eliminar el tablero. Intenta nuevamente.');
+      } finally {
+        setDeletingBoardId(null);
+      }
+    },
+    [deletingBoardId],
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-100 to-slate-200">
@@ -116,6 +157,12 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
               </div>
             )}
 
+            {deleteError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">
+                {deleteError}
+              </div>
+            )}
+
             {loading ? (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
                 Cargando tableros...
@@ -124,19 +171,39 @@ export function BoardLanding({ onSelectBoard }: BoardLandingProps) {
               <ul className="grid gap-4 sm:grid-cols-2">
                 {sortedBoards.map(board => (
                   <li key={board._id}>
-                    <button
-                      type="button"
+                    <article
+                      role="button"
+                      tabIndex={0}
                       onClick={() => onSelectBoard(board)}
-                      className="flex h-full w-full flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelectBoard(board);
+                        }
+                      }}
+                      className="flex h-full w-full cursor-pointer flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-400 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2"
                     >
-                      <span className="text-base font-semibold text-slate-900">{board.name}</span>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-base font-semibold text-slate-900">{board.name}</span>
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            handleDeleteBoard(board._id);
+                          }}
+                          disabled={deletingBoardId === board._id}
+                          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {deletingBoardId === board._id ? 'Eliminando...' : 'Eliminar'}
+                        </button>
+                      </div>
                       <span className="mt-1 text-sm text-slate-500">Propietario: {board.owner}</span>
                       {board.createdAt && (
                         <span className="mt-3 text-xs text-slate-400">
                           Creado el {new Date(board.createdAt).toLocaleDateString()}
                         </span>
                       )}
-                    </button>
+                    </article>
                   </li>
                 ))}
               </ul>

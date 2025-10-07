@@ -17,10 +17,35 @@ export default function App() {
     setSelectedBoard(null);
   };
 
+  const handleBoardUpdate = (updated: BoardSummary) => {
+    setSelectedBoard(prev => (prev && prev._id === updated._id ? { ...prev, ...updated } : prev));
+  };
+
+  const handleBoardDeleted = (boardId: string) => {
+    let shouldReset = false;
+    setSelectedBoard(prev => {
+      if (prev && prev._id === boardId) {
+        shouldReset = true;
+        return null;
+      }
+      return prev;
+    });
+    if (shouldReset) {
+      resetBoard();
+    }
+  };
+
   const board = useMemo(() => selectedBoard, [selectedBoard]);
 
   if (board) {
-    return <BoardPage board={board} onBack={handleBackToBoards} />;
+    return (
+      <BoardPage
+        board={board}
+        onBack={handleBackToBoards}
+        onBoardUpdate={handleBoardUpdate}
+        onBoardDeleted={handleBoardDeleted}
+      />
+    );
   }
 
   return <BoardLanding onSelectBoard={handleOpenBoard} />;
