@@ -12,6 +12,7 @@ type State = {
   setTasks: (tasks: Task[]) => void;
   upsertTask: (t: Task) => void;
   removeTask: (id: string, columnId: string) => void;
+  moveTaskLocally: (taskId: string, fromColumnId: string, toColumnId: string, toPosition: number) => void;
 };
 
 export const useBoard = create<State>((set, get) => ({
@@ -39,4 +40,26 @@ export const useBoard = create<State>((set, get) => ({
     const list = (state.tasksByColumn[columnId] || []).filter(x => x._id !== id);
     return { tasksByColumn: { ...state.tasksByColumn, [columnId]: list } };
   }),
+  moveTaskLocally: (taskId, fromColumnId, toColumnId, toPosition) =>
+    set(state => {
+      const from = [...(state.tasksByColumn[fromColumnId] || [])].filter(t => t._id !== taskId);
+      const moving = (state.tasksByColumn[fromColumnId] || []).find(t => t._id === taskId);
+      const to = [...(state.tasksByColumn[toColumnId] || [])];
+
+      if (!moving) return state;
+
+      const moved: Task = { ...moving, columnId: toColumnId, position: toPosition };
+
+      // insertar y ordenar
+      to.push(moved);
+      to.sort((a,b)=>a.position-b.position);
+
+      return {
+        tasksByColumn: {
+          ...state.tasksByColumn,
+          [fromColumnId]: from,
+          [toColumnId]: to,
+        }
+      };
+    }),
 }));

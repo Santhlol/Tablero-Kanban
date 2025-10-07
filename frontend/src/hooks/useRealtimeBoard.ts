@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { socket } from '../lib/socket';
-import { useBoard, Task } from '../store/board';
+import type { Task } from '../store/board';
+import { useBoard } from '../store/board';
 
 export function useRealtimeBoard(boardId: string) {
   const { upsertTask, removeTask, setBoardId } = useBoard();
