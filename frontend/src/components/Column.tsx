@@ -13,16 +13,28 @@ export const ColumnView: React.FC<{
   const { setNodeRef } = useDroppable({ id: columnId(column._id) });
 
   return (
-    <div ref={setNodeRef} style={{ width: 280, background: '#f6f6f7', borderRadius: 10, padding: 10, border: '1px solid #e5e5e8' }}>
-      <div style={{ fontWeight: 700, marginBottom: 10 }}>{column.title}</div>
+    <div
+      ref={setNodeRef}
+      className="w-72 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm backdrop-blur"
+    >
+      <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
+        {column.title}
+      </div>
 
       <SortableContext
         id={columnId(column._id)}
         items={tasks.map(t => taskId(t._id))}
         strategy={verticalListSortingStrategy}
       >
-        <div>
-          {tasks.map(t => <DraggableTask key={t._id} task={t} />)}
+        <div className="space-y-3">
+          {tasks.map(t => (
+            <DraggableTask key={t._id} task={t} />
+          ))}
+          {!tasks.length && (
+            <p className="rounded-lg border border-dashed border-slate-300 bg-white/40 p-3 text-xs text-slate-400">
+              Arrastra tareas aquí
+            </p>
+          )}
         </div>
       </SortableContext>
     </div>

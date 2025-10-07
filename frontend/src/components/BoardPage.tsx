@@ -1,28 +1,56 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent, DragStartEvent, DragOverEvent } from '@dnd-kit/core';
-import { BoardsAPI, ColumnsAPI, TasksAPI } from '../api/http';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { ColumnsAPI, TasksAPI } from '../api/http';
 import { useBoard } from '../store/board';
 import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 import { ColumnView } from './Column';
-import type { Task } from '../store/board';
 import { isTaskId, isColumnId, rawId } from '../dnd/utils';
-import { arrayMove } from '@dnd-kit/sortable';
 import { computeNewPosition } from '../dnd/utils';
+import type { BoardSummary } from '../types/board';
 
-export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
+type BoardPageProps = {
+  board: BoardSummary;
+  onBack: () => void;
+};
+
+export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
+  const boardId = board._id;
   const { columns, tasksByColumn, setColumns, setTasks, moveTaskLocally } = useBoard();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   useRealtimeBoard(boardId);
 
   useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    setColumns([]);
+    setTasks([]);
+
     (async () => {
-      const [cols, tasks] = await Promise.all([
-        ColumnsAPI.byBoard(boardId),
-        TasksAPI.byBoard(boardId),
-      ]);
-      setColumns(cols);
-      setTasks(tasks);
+      try {
+        const [cols, tasks] = await Promise.all([
+          ColumnsAPI.byBoard(boardId),
+          TasksAPI.byBoard(boardId),
+        ]);
+        if (!alive) return;
+        setColumns(cols);
+        setTasks(tasks);
+      } catch (err) {
+        if (!alive) return;
+        console.error('Error cargando tablero', err);
+        setError('No se pudieron cargar las columnas del tablero. Intenta recargar.');
+        setColumns([]);
+        setTasks([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, [boardId, setColumns, setTasks]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -32,9 +60,10 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
     if (!over) return;
 
     // active.id y over.id son DndId: "task:<id>" o "column:<id>"
-    if (!isTaskId(String(active.id))) return; // sólo arrastramos tareas
+    const activeId = String(active.id);
+    if (!isTaskId(activeId)) return; // sólo arrastramos tareas
 
-    const taskId = rawId(String(active.id) as any);
+    const taskId = rawId(activeId);
     const overId = String(over.id);
 
     // Determinar columna destino y destino index
@@ -42,7 +71,7 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
     let destIndex: number;
 
     if (isTaskId(overId)) {
-      const overTaskId = rawId(overId as any);
+      const overTaskId = rawId(overId);
       // Encuentra la columna que contiene la tarea overTaskId
       const entry = Object.entries(tasksByColumn).find(([, list]) => list.some(t => t._id === overTaskId));
       if (!entry) return;
@@ -50,7 +79,7 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
       const list = tasksByColumn[toColumnId] || [];
       destIndex = list.findIndex(t => t._id === overTaskId);
     } else if (isColumnId(overId)) {
-      toColumnId = rawId(overId as any);
+      toColumnId = rawId(overId);
       const list = tasksByColumn[toColumnId] || [];
       destIndex = list.length; // soltado al final de la columna
     } else {
@@ -97,26 +126,65 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
     });
   };
 
-  return (
-    <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Board #{boardId}</h2>
-        <button onClick={createQuickTask} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #ccc', background: '#fff', cursor: 'pointer' }}>
-          + Tarea
-        </button>
-      </div>
+  const sortedColumns = [...columns].sort((a, b) => a.position - b.position);
 
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', overflowX: 'auto' }}>
-          {columns.map(col => (
-            <ColumnView
-              key={col._id}
-              column={col}
-              tasks={(tasksByColumn[col._id] || []).slice().sort((a,b)=>a.position-b.position)}
-            />
-          ))}
-        </div>
-      </DndContext>
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-10">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-700"
+            >
+              <span aria-hidden>←</span> Todos los tableros
+            </button>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
+              <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={createQuickTask}
+            disabled={!columns.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+          >
+            + Tarea rápida
+          </button>
+        </header>
+
+        <main className="flex-1">
+          {error ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600 shadow-sm">
+              {error}
+            </div>
+          ) : loading ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+              Cargando columnas...
+            </div>
+          ) : !sortedColumns.length ? (
+            <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/70 p-10 text-sm text-slate-500">
+              Aún no hay columnas en este tablero.
+            </div>
+          ) : (
+            <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+              <div className="overflow-x-auto pb-4">
+                <div className="flex items-start gap-4">
+                  {sortedColumns.map(col => (
+                    <ColumnView
+                      key={col._id}
+                      column={col}
+                      tasks={(tasksByColumn[col._id] || []).slice().sort((a,b)=>a.position-b.position)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </DndContext>
+          )}
+        </main>
+      </div>
     </div>
   );
 };
