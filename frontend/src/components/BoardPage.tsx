@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import { BoardsAPI, ColumnsAPI, TasksAPI } from '../api/http';
 import { useBoard } from '../store/board';
@@ -12,6 +12,7 @@ import type { BoardSummary } from '../types/board';
 import type { Task } from '../store/board';
 import { TaskModal, type TaskFormValues } from './TaskModal';
 import { ColumnForm } from './ColumnForm';
+import { TaskCard } from './TaskCard';
 
 type BoardPageProps = {
   board: BoardSummary;
@@ -54,6 +55,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
   const [renameBusy, setRenameBusy] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [boardActionError, setBoardActionError] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isRenaming) {
@@ -137,6 +140,17 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     setCreateError(null);
   };
 
+  const onDragStart = (event: DragStartEvent) => {
+    const activeId = String(event.active.id);
+    if (isTaskId(activeId)) {
+      setActiveTaskId(rawId(activeId));
+      setActiveColumnId(null);
+    } else if (isColumnId(activeId)) {
+      setActiveColumnId(rawId(activeId));
+      setActiveTaskId(null);
+    }
+  };
+
   const onDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over) return;
@@ -171,6 +185,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
         console.error('Move column failed', err);
         setColumns(ordered);
       }
+      setActiveColumnId(null);
+      setActiveTaskId(null);
       return;
     }
 
@@ -236,6 +252,13 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       // o mostrar un toast de error.
       console.error('Move failed', err);
     }
+    setActiveTaskId(null);
+    setActiveColumnId(null);
+  };
+
+  const onDragCancel = () => {
+    setActiveTaskId(null);
+    setActiveColumnId(null);
   };
 
   const createQuickTask = async () => {
@@ -629,7 +652,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
               </div>
             )
           ) : (
-            <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+            <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
               <div className="overflow-x-auto pb-4">
                 <div className="flex items-start gap-4">
                   <SortableContext
@@ -680,6 +703,34 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
                   </div>
                 </div>
               </div>
+              <DragOverlay>
+                {activeTaskId ? (
+                  (() => {
+                    const task = Object.values(tasksByColumn)
+                      .flat()
+                      .find(t => t._id === activeTaskId);
+                    return task ? (
+                      <div className="w-72 cursor-grabbing">
+                        <TaskCard task={task} />
+                      </div>
+                    ) : null;
+                  })()
+                ) : activeColumnId ? (
+                  (() => {
+                    const column = columns.find(col => col._id === activeColumnId);
+                    if (!column) return null;
+                    const taskCount = (tasksByColumn[column._id] || []).length;
+                    return (
+                      <div className="w-72 rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-lg">
+                        <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                          {column.title}
+                        </div>
+                        <p className="text-xs text-slate-400">{taskCount} tarea{taskCount === 1 ? '' : 's'}</p>
+                      </div>
+                    );
+                  })()
+                ) : null}
+              </DragOverlay>
             </DndContext>
           )}
         </main>

@@ -30,7 +30,8 @@ export const ColumnView: React.FC<ColumnViewProps> = ({
   const style = useMemo(() => ({
     transform: CSS.Transform.toString(transform),
     transition,
-  }), [transform, transition]);
+    zIndex: isDragging ? 25 : undefined,
+  }), [transform, transition, isDragging]);
 
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(column.title);
@@ -86,7 +87,7 @@ export const ColumnView: React.FC<ColumnViewProps> = ({
       ref={setNodeRef}
       style={style}
       className={`w-72 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm backdrop-blur transition-shadow ${
-        isDragging ? 'shadow-lg ring-2 ring-indigo-200' : ''
+        isDragging ? 'shadow-xl ring-2 ring-indigo-200' : ''
       }`}
       {...attributes}
     >
