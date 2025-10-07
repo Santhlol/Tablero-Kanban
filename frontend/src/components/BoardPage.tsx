@@ -1,28 +1,84 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent, DragStartEvent, DragOverEvent } from '@dnd-kit/core';
-import { BoardsAPI, ColumnsAPI, TasksAPI } from '../api/http';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
+import { ColumnsAPI, TasksAPI } from '../api/http';
 import { useBoard } from '../store/board';
 import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 import { ColumnView } from './Column';
-import type { Task } from '../store/board';
-import { isTaskId, isColumnId, rawId } from '../dnd/utils';
-import { arrayMove } from '@dnd-kit/sortable';
+import { columnId, isTaskId, isColumnId, rawId } from '../dnd/utils';
 import { computeNewPosition } from '../dnd/utils';
+import type { BoardSummary } from '../types/board';
+import type { Task } from '../store/board';
+import { TaskModal, type TaskFormValues } from './TaskModal';
 
-export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
-  const { columns, tasksByColumn, setColumns, setTasks, moveTaskLocally } = useBoard();
+type BoardPageProps = {
+  board: BoardSummary;
+  onBack: () => void;
+};
+
+export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
+  const boardId = board._id;
+  const {
+    columns,
+    tasksByColumn,
+    setColumns,
+    setTasks,
+    moveTaskLocally,
+    upsertColumn,
+    updateColumn,
+    removeColumn,
+    upsertTask,
+    removeTask,
+  } = useBoard();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isAddingColumn, setIsAddingColumn] = useState(false);
+  const [newColumnTitle, setNewColumnTitle] = useState('');
+  const [creatingColumn, setCreatingColumn] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [taskModal, setTaskModal] = useState<
+    | { mode: 'create'; columnId: string }
+    | { mode: 'edit'; task: Task }
+    | null
+  >(null);
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
   useRealtimeBoard(boardId);
 
   useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    setColumns([]);
+    setTasks([]);
+    setIsAddingColumn(false);
+    setNewColumnTitle('');
+    setCreateError(null);
+
     (async () => {
-      const [cols, tasks] = await Promise.all([
-        ColumnsAPI.byBoard(boardId),
-        TasksAPI.byBoard(boardId),
-      ]);
-      setColumns(cols);
-      setTasks(tasks);
+      try {
+        const [cols, tasks] = await Promise.all([
+          ColumnsAPI.byBoard(boardId),
+          TasksAPI.byBoard(boardId),
+        ]);
+        if (!alive) return;
+        setColumns(cols);
+        setTasks(tasks);
+      } catch (err) {
+        if (!alive) return;
+        console.error('Error cargando tablero', err);
+        setError('No se pudieron cargar las columnas del tablero. Intenta recargar.');
+        setColumns([]);
+        setTasks([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, [boardId, setColumns, setTasks]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -32,17 +88,48 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
     if (!over) return;
 
     // active.id y over.id son DndId: "task:<id>" o "column:<id>"
-    if (!isTaskId(String(active.id))) return; // sólo arrastramos tareas
-
-    const taskId = rawId(String(active.id) as any);
+    const activeId = String(active.id);
     const overId = String(over.id);
+
+    if (isColumnId(activeId) && isColumnId(overId)) {
+      const activeColumnId = rawId(activeId);
+      const overColumnId = rawId(overId);
+      if (activeColumnId === overColumnId) return;
+
+      const ordered = [...columns].sort((a, b) => a.position - b.position);
+      const activeIndex = ordered.findIndex(c => c._id === activeColumnId);
+      const overIndex = ordered.findIndex(c => c._id === overColumnId);
+      if (activeIndex === -1 || overIndex === -1) return;
+
+      const nextOrder = ordered.slice();
+      const [moved] = nextOrder.splice(activeIndex, 1);
+      nextOrder.splice(overIndex, 0, moved);
+      const destinationIndex = nextOrder.findIndex(c => c._id === activeColumnId);
+      const before = nextOrder[destinationIndex - 1]?.position;
+      const after = nextOrder[destinationIndex + 1]?.position;
+      const newPosition = computeNewPosition(nextOrder.length, destinationIndex, before, after);
+
+      updateColumn(activeColumnId, { position: newPosition });
+
+      try {
+        await ColumnsAPI.update(activeColumnId, { position: newPosition });
+      } catch (err) {
+        console.error('Move column failed', err);
+        setColumns(ordered);
+      }
+      return;
+    }
+
+    if (!isTaskId(activeId)) return; // sólo arrastramos tareas
+
+    const taskId = rawId(activeId);
 
     // Determinar columna destino y destino index
     let toColumnId: string;
     let destIndex: number;
 
     if (isTaskId(overId)) {
-      const overTaskId = rawId(overId as any);
+      const overTaskId = rawId(overId);
       // Encuentra la columna que contiene la tarea overTaskId
       const entry = Object.entries(tasksByColumn).find(([, list]) => list.some(t => t._id === overTaskId));
       if (!entry) return;
@@ -50,7 +137,7 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
       const list = tasksByColumn[toColumnId] || [];
       destIndex = list.findIndex(t => t._id === overTaskId);
     } else if (isColumnId(overId)) {
-      toColumnId = rawId(overId as any);
+      toColumnId = rawId(overId);
       const list = tasksByColumn[toColumnId] || [];
       destIndex = list.length; // soltado al final de la columna
     } else {
@@ -97,26 +184,385 @@ export const BoardPage: React.FC<{ boardId: string }> = ({ boardId }) => {
     });
   };
 
-  return (
-    <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 8 }}>
-        <h2 style={{ margin: 0 }}>Board #{boardId}</h2>
-        <button onClick={createQuickTask} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #ccc', background: '#fff', cursor: 'pointer' }}>
-          + Tarea
-        </button>
-      </div>
+  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
+  const sortedTasksByColumn = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const [key, list] of Object.entries(tasksByColumn)) {
+      map[key] = [...list].sort((a, b) => a.position - b.position);
+    }
+    return map;
+  }, [tasksByColumn]);
 
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', overflowX: 'auto' }}>
-          {columns.map(col => (
-            <ColumnView
-              key={col._id}
-              column={col}
-              tasks={(tasksByColumn[col._id] || []).slice().sort((a,b)=>a.position-b.position)}
-            />
-          ))}
-        </div>
-      </DndContext>
+  const getColumnTasks = (columnId: string, excludeId?: string) => {
+    const list = sortedTasksByColumn[columnId] || [];
+    return excludeId ? list.filter(task => task._id !== excludeId) : list;
+  };
+
+  const closeTaskModal = () => {
+    setTaskError(null);
+    setTaskModal(null);
+  };
+
+  const handleCreateTaskRequest = (columnId: string) => {
+    setTaskError(null);
+    setTaskModal({ mode: 'create', columnId });
+  };
+
+  const handleOpenTask = (task: Task) => {
+    setTaskError(null);
+    setTaskModal({ mode: 'edit', task });
+  };
+
+  const computePlacementPosition = (
+    columnId: string,
+    placement: 'start' | 'end',
+    excludeId?: string,
+  ) => {
+    const list = getColumnTasks(columnId, excludeId);
+    const index = placement === 'start' ? 0 : list.length;
+    const before = placement === 'end' ? list[list.length - 1]?.position : undefined;
+    const after = placement === 'start' ? list[0]?.position : undefined;
+    return computeNewPosition(list.length, index, before, after);
+  };
+
+  const handleSubmitTask = async (values: TaskFormValues) => {
+    if (!taskModal) return;
+    const columnExists = sortedColumns.some(col => col._id === values.columnId);
+    if (!columnExists) {
+      setTaskError('La columna seleccionada ya no existe. Actualiza la página.');
+      return;
+    }
+
+    const cleanTitle = values.title.trim();
+    const cleanDescription = values.description.trim();
+    const cleanAssignee = values.assignee.trim();
+
+    if (!cleanTitle) {
+      setTaskError('El título es obligatorio.');
+      return;
+    }
+
+    setTaskBusy(true);
+    setTaskError(null);
+
+    if (taskModal.mode === 'create') {
+      try {
+        const placement = values.placement === 'start' ? 'start' : 'end';
+        const position = computePlacementPosition(values.columnId, placement);
+        const created = await TasksAPI.create({
+          boardId,
+          columnId: values.columnId,
+          title: cleanTitle,
+          description: cleanDescription ? cleanDescription : undefined,
+          assignee: cleanAssignee ? cleanAssignee : undefined,
+          position,
+        });
+        upsertTask(created);
+        closeTaskModal();
+      } catch (err) {
+        console.error('Create task failed', err);
+        setTaskError('No se pudo crear la tarea. Intenta nuevamente.');
+      } finally {
+        setTaskBusy(false);
+      }
+      return;
+    }
+
+    const originalTask = taskModal.task;
+
+    try {
+      const updated = await TasksAPI.update(originalTask._id, {
+        title: cleanTitle,
+        description: cleanDescription ? cleanDescription : undefined,
+        assignee: cleanAssignee ? cleanAssignee : undefined,
+      });
+      if (updated) {
+        upsertTask(updated);
+      }
+
+      const columnChanged = values.columnId !== originalTask.columnId;
+      const placementChanged = values.placement !== 'keep';
+
+      if (columnChanged || placementChanged) {
+        const placement = values.placement === 'keep' ? 'end' : values.placement;
+        const position = computePlacementPosition(values.columnId, placement, originalTask._id);
+        const moved = await TasksAPI.move(originalTask._id, {
+          columnId: values.columnId,
+          position,
+        });
+        removeTask(originalTask._id, originalTask.columnId);
+        if (moved) {
+          upsertTask(moved);
+        }
+      }
+
+      closeTaskModal();
+    } catch (err) {
+      console.error('Update task failed', err);
+      setTaskError('No se pudo guardar la tarea. Intenta de nuevo.');
+    } finally {
+      setTaskBusy(false);
+    }
+  };
+
+  const handleDeleteTask = async () => {
+    if (!taskModal || taskModal.mode !== 'edit') return;
+    if (!confirm('¿Seguro que deseas eliminar esta tarea?')) return;
+    const task = taskModal.task;
+    setTaskBusy(true);
+    setTaskError(null);
+    try {
+      await TasksAPI.remove(task._id);
+      removeTask(task._id, task.columnId);
+      closeTaskModal();
+    } catch (err) {
+      console.error('Delete task failed', err);
+      setTaskError('No se pudo eliminar la tarea. Intenta nuevamente.');
+    } finally {
+      setTaskBusy(false);
+    }
+  };
+
+  const handleCreateColumn = async (evt: React.FormEvent) => {
+    evt.preventDefault();
+    const title = newColumnTitle.trim();
+    if (!title) return;
+
+    const before = sortedColumns[sortedColumns.length - 1]?.position;
+    const position = computeNewPosition(sortedColumns.length, sortedColumns.length, before, undefined);
+
+    setCreatingColumn(true);
+    setCreateError(null);
+    try {
+      const created = await ColumnsAPI.create({ boardId, title, position });
+      upsertColumn(created);
+      setIsAddingColumn(false);
+      setNewColumnTitle('');
+    } catch (err) {
+      console.error('Create column failed', err);
+      setCreateError('No se pudo crear la columna. Intenta nuevamente.');
+    } finally {
+      setCreatingColumn(false);
+    }
+  };
+
+  const handleRenameColumn = async (id: string, title: string) => {
+    const updated = await ColumnsAPI.update(id, { title });
+    if (!updated) {
+      throw new Error('Column not found');
+    }
+    upsertColumn(updated);
+  };
+
+  const handleDeleteColumn = async (id: string) => {
+    await ColumnsAPI.remove(id);
+    removeColumn(id);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-10">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-700"
+            >
+              <span aria-hidden>←</span> Todos los tableros
+            </button>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
+              <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={createQuickTask}
+            disabled={!columns.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+          >
+            + Tarea rápida
+          </button>
+        </header>
+
+        <main className="flex-1">
+          {error ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-600 shadow-sm">
+              {error}
+            </div>
+          ) : loading ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+              Cargando columnas...
+            </div>
+          ) : !sortedColumns.length ? (
+            isAddingColumn ? (
+              <form
+                onSubmit={handleCreateColumn}
+                className="mx-auto flex w-full max-w-md flex-col gap-4 rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-6 text-sm shadow-sm"
+              >
+                <div className="space-y-3">
+                  <h2 className="text-base font-semibold text-indigo-700">Nueva columna</h2>
+                  <input
+                    value={newColumnTitle}
+                    onChange={event => setNewColumnTitle(event.target.value)}
+                    autoFocus
+                    placeholder="Nombre de la columna"
+                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    disabled={creatingColumn}
+                  />
+                  {createError && (
+                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
+                  )}
+                </div>
+                <div className="flex items-center justify-end gap-2 text-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingColumn(false);
+                      setNewColumnTitle('');
+                      setCreateError(null);
+                    }}
+                    className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
+                    disabled={creatingColumn}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creatingColumn || !newColumnTitle.trim()}
+                    className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                  >
+                    Crear
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-white/70 p-10 text-sm text-slate-500">
+                <p>Aún no hay columnas en este tablero.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingColumn(true);
+                    setCreateError(null);
+                  }}
+                  className="rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50"
+                >
+                  + Crear la primera columna
+                </button>
+              </div>
+            )
+          ) : (
+            <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+                <div className="overflow-x-auto pb-4">
+                  <div className="flex items-start gap-4">
+                    <SortableContext
+                      items={sortedColumns.map(col => columnId(col._id))}
+                      strategy={horizontalListSortingStrategy}
+                    >
+                      {sortedColumns.map(col => (
+                        <ColumnView
+                          key={col._id}
+                          column={col}
+                          tasks={sortedTasksByColumn[col._id] || []}
+                          onRename={handleRenameColumn}
+                          onDelete={handleDeleteColumn}
+                          onCreateTask={handleCreateTaskRequest}
+                          onOpenTask={handleOpenTask}
+                        />
+                      ))}
+                    </SortableContext>
+                    <div className="w-72 flex-shrink-0">
+                    {isAddingColumn ? (
+                      <form
+                        onSubmit={handleCreateColumn}
+                        className="flex h-full flex-col justify-between rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-4 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-3">
+                          <h2 className="text-sm font-semibold text-indigo-700">Nueva columna</h2>
+                          <input
+                            value={newColumnTitle}
+                            onChange={event => setNewColumnTitle(event.target.value)}
+                            autoFocus
+                            placeholder="Nombre de la columna"
+                            className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            disabled={creatingColumn}
+                          />
+                          {createError && (
+                            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
+                          )}
+                        </div>
+                        <div className="mt-4 flex items-center justify-end gap-2 text-sm">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAddingColumn(false);
+                              setNewColumnTitle('');
+                              setCreateError(null);
+                            }}
+                            className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
+                            disabled={creatingColumn}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={creatingColumn || !newColumnTitle.trim()}
+                            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                          >
+                            Crear
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingColumn(true);
+                          setCreateError(null);
+                        }}
+                        className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/60 p-6 text-sm font-semibold text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600"
+                      >
+                        + Agregar columna
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </DndContext>
+          )}
+        </main>
+      </div>
+      {taskModal && sortedColumns.length > 0 && (
+        <TaskModal
+          mode={taskModal.mode}
+          columns={sortedColumns}
+          initialValues={
+            taskModal.mode === 'create'
+              ? {
+                  title: '',
+                  description: '',
+                  assignee: '',
+                  columnId:
+                    sortedColumns.find(col => col._id === taskModal.columnId)?._id || sortedColumns[0]._id,
+                  placement: 'end',
+                }
+              : {
+                  title: taskModal.task.title,
+                  description: taskModal.task.description || '',
+                  assignee: taskModal.task.assignee || '',
+                  columnId:
+                    sortedColumns.find(col => col._id === taskModal.task.columnId)?._id || sortedColumns[0]._id,
+                  placement: 'keep',
+                }
+          }
+          busy={taskBusy}
+          error={taskError}
+          onClose={closeTaskModal}
+          onSubmit={handleSubmitTask}
+          onDelete={taskModal.mode === 'edit' ? handleDeleteTask : undefined}
+        />
+      )}
     </div>
   );
 };
