@@ -10,7 +10,9 @@ import { TasksModule } from './tasks/tasks.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRootAsync({
-      useFactory: (cfg: ConfigService) => ({ uri: cfg.get<string>('MONGODB_URI') }),
+      useFactory: (cfg: ConfigService) => ({
+        uri: cfg.get<string>('MONGODB_URI'),
+      }),
       inject: [ConfigService],
     }),
     RealtimeModule,

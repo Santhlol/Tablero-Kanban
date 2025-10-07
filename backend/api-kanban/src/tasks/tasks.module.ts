@@ -11,7 +11,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     RealtimeModule,
   ],
   providers: [TasksService],
-  controllers: [TasksController],   
+  controllers: [TasksController],
   exports: [TasksService],
 })
 export class TasksModule {}

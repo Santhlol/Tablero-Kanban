@@ -9,7 +9,8 @@ import { TasksModule } from '../tasks/tasks.module';
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: 'Board', schema: BoardSchema }]),
-    ColumnsModule, TasksModule,
+    ColumnsModule,
+    TasksModule,
   ],
   providers: [BoardsService],
   controllers: [BoardsController],

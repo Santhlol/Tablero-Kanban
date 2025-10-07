@@ -12,10 +12,18 @@ export class BoardsController {
     private tasks: TasksService,
   ) {}
 
-  @Post() create(@Body() dto: CreateBoardDto) { return this.boards.create(dto); }
-  @Get() findAll() { return this.boards.findAll(); }
-  @Get(':id') findOne(@Param('id') id: string) { return this.boards.findOne(id); }
-  @Delete(':id') remove(@Param('id') id: string) { return this.boards.remove(id); }
+  @Post() create(@Body() dto: CreateBoardDto) {
+    return this.boards.create(dto);
+  }
+  @Get() findAll() {
+    return this.boards.findAll();
+  }
+  @Get(':id') findOne(@Param('id') id: string) {
+    return this.boards.findOne(id);
+  }
+  @Delete(':id') remove(@Param('id') id: string) {
+    return this.boards.remove(id);
+  }
 
   @Get(':id/summary')
   async summary(@Param('id') id: string) {
@@ -24,11 +32,17 @@ export class BoardsController {
       this.tasks.findByBoard(id),
     ]);
     const map: Record<string, number> = {};
-    tasks.forEach(t => { map[String(t.columnId)] = (map[String(t.columnId)]||0)+1; });
+    tasks.forEach((t) => {
+      map[String(t.columnId)] = (map[String(t.columnId)] || 0) + 1;
+    });
     return {
       boardId: id,
       totalTasks: tasks.length,
-      columns: cols.map(c => ({ id: c._id, title: c.title, count: map[String(c._id)]||0 })),
+      columns: cols.map((c) => ({
+        id: c._id,
+        title: c.title,
+        count: map[String(c._id)] || 0,
+      })),
     };
   }
 }

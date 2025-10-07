@@ -1,6 +1,8 @@
-import { Schema, Document, Types } from 'mongoose';
+import { Schema, Document } from 'mongoose';
 export interface Board extends Document {
-  name: string; owner: string; createdAt: Date;
+  name: string;
+  owner: string;
+  createdAt: Date;
 }
 export const BoardSchema = new Schema<Board>({
   name: { type: String, required: true },
