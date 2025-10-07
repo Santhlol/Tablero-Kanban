@@ -11,6 +11,7 @@ import { computeNewPosition } from '../dnd/utils';
 import type { BoardSummary } from '../types/board';
 import type { Task } from '../store/board';
 import { TaskModal, type TaskFormValues } from './TaskModal';
+import { ColumnForm } from './ColumnForm';
 
 type BoardPageProps = {
   board: BoardSummary;
@@ -37,6 +38,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [quickTaskBusy, setQuickTaskBusy] = useState(false);
+  const [quickTaskError, setQuickTaskError] = useState<string | null>(null);
   const [taskModal, setTaskModal] = useState<
     | { mode: 'create'; columnId: string }
     | { mode: 'edit'; task: Task }
@@ -55,6 +58,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     setIsAddingColumn(false);
     setNewColumnTitle('');
     setCreateError(null);
+    setQuickTaskError(null);
+    setQuickTaskBusy(false);
 
     (async () => {
       try {
@@ -82,6 +87,21 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   }, [boardId, setColumns, setTasks]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
+  const sortedTasksByColumn = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const [key, list] of Object.entries(tasksByColumn)) {
+      map[key] = [...list].sort((a, b) => a.position - b.position);
+    }
+    return map;
+  }, [tasksByColumn]);
+
+  const resetColumnForm = () => {
+    setIsAddingColumn(false);
+    setNewColumnTitle('');
+    setCreateError(null);
+  };
 
   const onDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -185,24 +205,49 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   };
 
   const createQuickTask = async () => {
-    const firstColumn = columns[0];
-    if (!firstColumn) return;
-    await TasksAPI.create({
+    const firstColumn = sortedColumns[0];
+    if (!firstColumn) {
+      setQuickTaskError('Crea una columna antes de agregar tareas.');
+      return;
+    }
+
+    const existingTasks = [...(sortedTasksByColumn[firstColumn._id] || [])];
+    const before = existingTasks[existingTasks.length - 1]?.position;
+    const position = computeNewPosition(existingTasks.length, existingTasks.length, before, undefined);
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTask: Task = {
+      _id: tempId,
       boardId,
       columnId: firstColumn._id,
       title: 'Nueva tarea',
-      position: (tasksByColumn[firstColumn._id]?.length || 0) * 10,
-    });
-  };
+      position,
+    };
 
-  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
-  const sortedTasksByColumn = useMemo(() => {
-    const map: Record<string, Task[]> = {};
-    for (const [key, list] of Object.entries(tasksByColumn)) {
-      map[key] = [...list].sort((a, b) => a.position - b.position);
+    setQuickTaskBusy(true);
+    setQuickTaskError(null);
+    upsertTask(optimisticTask);
+
+    try {
+      const created = await TasksAPI.create({
+        boardId,
+        columnId: firstColumn._id,
+        title: 'Nueva tarea',
+        position,
+      });
+      removeTask(tempId, firstColumn._id);
+      if (created) {
+        upsertTask(created);
+      } else {
+        setQuickTaskError('No se pudo crear la tarea rápida. Intenta nuevamente.');
+      }
+    } catch (err) {
+      console.error('Quick create task failed', err);
+      removeTask(tempId, firstColumn._id);
+      setQuickTaskError('No se pudo crear la tarea rápida. Intenta nuevamente.');
+    } finally {
+      setQuickTaskBusy(false);
     }
-    return map;
-  }, [tasksByColumn]);
+  };
 
   const getColumnTasks = (columnId: string, excludeId?: string) => {
     const list = sortedTasksByColumn[columnId] || [];
@@ -347,8 +392,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     try {
       const created = await ColumnsAPI.create({ boardId, title, position });
       upsertColumn(created);
-      setIsAddingColumn(false);
-      setNewColumnTitle('');
+      resetColumnForm();
     } catch (err) {
       console.error('Create column failed', err);
       setCreateError('No se pudo crear la columna. Intenta nuevamente.');
@@ -390,12 +434,16 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
           <button
             type="button"
             onClick={createQuickTask}
-            disabled={!columns.length}
+            disabled={!columns.length || quickTaskBusy}
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
           >
             + Tarea rápida
           </button>
         </header>
+
+        {quickTaskError && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{quickTaskError}</p>
+        )}
 
         <main className="flex-1">
           {error ? (
@@ -408,46 +456,18 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
             </div>
           ) : !sortedColumns.length ? (
             isAddingColumn ? (
-              <form
+              <ColumnForm
+                title={newColumnTitle}
+                error={createError}
+                busy={creatingColumn}
                 onSubmit={handleCreateColumn}
-                className="mx-auto flex w-full max-w-md flex-col gap-4 rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-6 text-sm shadow-sm"
-              >
-                <div className="space-y-3">
-                  <h2 className="text-base font-semibold text-indigo-700">Nueva columna</h2>
-                  <input
-                    value={newColumnTitle}
-                    onChange={event => setNewColumnTitle(event.target.value)}
-                    autoFocus
-                    placeholder="Nombre de la columna"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    disabled={creatingColumn}
-                  />
-                  {createError && (
-                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
-                  )}
-                </div>
-                <div className="flex items-center justify-end gap-2 text-sm">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddingColumn(false);
-                      setNewColumnTitle('');
-                      setCreateError(null);
-                    }}
-                    className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
-                    disabled={creatingColumn}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={creatingColumn || !newColumnTitle.trim()}
-                    className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
-                  >
-                    Crear
-                  </button>
-                </div>
-              </form>
+                onCancel={resetColumnForm}
+                onTitleChange={value => {
+                  setNewColumnTitle(value);
+                  setCreateError(null);
+                }}
+                className="mx-auto w-full max-w-md p-6"
+              />
             ) : (
               <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-white/70 p-10 text-sm text-slate-500">
                 <p>Aún no hay columnas en este tablero.</p>
@@ -456,6 +476,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
                   onClick={() => {
                     setIsAddingColumn(true);
                     setCreateError(null);
+                    setNewColumnTitle('');
                   }}
                   className="rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50"
                 >
@@ -465,72 +486,47 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
             )
           ) : (
             <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-                <div className="overflow-x-auto pb-4">
-                  <div className="flex items-start gap-4">
-                    <SortableContext
-                      items={sortedColumns.map(col => columnId(col._id))}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {sortedColumns.map(col => (
-                        <ColumnView
-                          key={col._id}
-                          column={col}
-                          tasks={sortedTasksByColumn[col._id] || []}
-                          onRename={handleRenameColumn}
-                          onDelete={handleDeleteColumn}
-                          onCreateTask={handleCreateTaskRequest}
-                          onOpenTask={handleOpenTask}
-                        />
-                      ))}
-                    </SortableContext>
-                    <div className="w-72 flex-shrink-0">
+              <div className="overflow-x-auto pb-4">
+                <div className="flex items-start gap-4">
+                  <SortableContext
+                    items={sortedColumns.map(col => columnId(col._id))}
+                    strategy={horizontalListSortingStrategy}
+                  >
+                    {sortedColumns.map(col => (
+                      <ColumnView
+                        key={col._id}
+                        column={col}
+                        tasks={sortedTasksByColumn[col._id] || []}
+                        onRename={handleRenameColumn}
+                        onDelete={handleDeleteColumn}
+                        onCreateTask={handleCreateTaskRequest}
+                        onOpenTask={handleOpenTask}
+                      />
+                    ))}
+                  </SortableContext>
+                  <div className="w-72 flex-shrink-0">
                     {isAddingColumn ? (
-                      <form
+                      <ColumnForm
+                        title={newColumnTitle}
+                        error={createError}
+                        busy={creatingColumn}
                         onSubmit={handleCreateColumn}
-                        className="flex h-full flex-col justify-between rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-4 shadow-sm"
-                      >
-                        <div className="flex flex-col gap-3">
-                          <h2 className="text-sm font-semibold text-indigo-700">Nueva columna</h2>
-                          <input
-                            value={newColumnTitle}
-                            onChange={event => setNewColumnTitle(event.target.value)}
-                            autoFocus
-                            placeholder="Nombre de la columna"
-                            className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                            disabled={creatingColumn}
-                          />
-                          {createError && (
-                            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
-                          )}
-                        </div>
-                        <div className="mt-4 flex items-center justify-end gap-2 text-sm">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsAddingColumn(false);
-                              setNewColumnTitle('');
-                              setCreateError(null);
-                            }}
-                            className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
-                            disabled={creatingColumn}
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={creatingColumn || !newColumnTitle.trim()}
-                            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
-                          >
-                            Crear
-                          </button>
-                        </div>
-                      </form>
+                        onCancel={resetColumnForm}
+                        onTitleChange={value => {
+                          setNewColumnTitle(value);
+                          setCreateError(null);
+                        }}
+                        className="h-full justify-between p-4"
+                        headingClassName="text-sm"
+                        footerClassName="mt-4"
+                      />
                     ) : (
                       <button
                         type="button"
                         onClick={() => {
                           setIsAddingColumn(true);
                           setCreateError(null);
+                          setNewColumnTitle('');
                         }}
                         className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/60 p-6 text-sm font-semibold text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600"
                       >

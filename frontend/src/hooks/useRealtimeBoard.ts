@@ -54,6 +54,7 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
 
     return () => {
       if (boardId) {
+        socket.emit('leaveBoard', { boardId });
         socket.off('task.created', onTaskCreated);
         socket.off('task.updated', onTaskUpdated);
         socket.off('task.moved', onTaskMoved);
