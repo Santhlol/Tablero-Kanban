@@ -20,6 +20,9 @@ export const ColumnsAPI = {
   byBoard: (boardId: string) => http.get<Column[]>(`/columns/board/${boardId}`).then(r => r.data),
   create: (payload: Pick<Column, 'boardId' | 'title' | 'position'>) =>
     http.post<Column>('/columns', payload).then(r => r.data),
+  update: (id: string, payload: Partial<Pick<Column, 'title' | 'position'>>) =>
+    http.patch<Column>(`/columns/${id}`, payload).then(r => r.data),
+  remove: (id: string) => http.delete(`/columns/${id}`).then(r => r.data),
 };
 
 export const TasksAPI = {
