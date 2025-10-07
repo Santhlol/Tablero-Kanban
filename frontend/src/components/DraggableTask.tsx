@@ -6,7 +6,12 @@ import type { Task } from '../store/board';
 import { TaskCard } from './TaskCard';
 import { taskId } from '../dnd/utils';
 
-export const DraggableTask: React.FC<{ task: Task }> = ({ task }) => {
+type DraggableTaskProps = {
+  task: Task;
+  onOpen: (task: Task) => void;
+};
+
+export const DraggableTask: React.FC<DraggableTaskProps> = ({ task, onOpen }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: taskId(task._id) });
 
@@ -24,7 +29,7 @@ export const DraggableTask: React.FC<{ task: Task }> = ({ task }) => {
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} />
+      <TaskCard task={task} onClick={() => onOpen(task)} />
     </div>
   );
 };

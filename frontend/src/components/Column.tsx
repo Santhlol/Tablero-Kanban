@@ -10,9 +10,18 @@ type ColumnViewProps = {
   tasks: Task[];
   onRename: (id: string, title: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onCreateTask: (columnId: string) => void;
+  onOpenTask: (task: Task) => void;
 };
 
-export const ColumnView: React.FC<ColumnViewProps> = ({ column, tasks, onRename, onDelete }) => {
+export const ColumnView: React.FC<ColumnViewProps> = ({
+  column,
+  tasks,
+  onRename,
+  onDelete,
+  onCreateTask,
+  onOpenTask,
+}) => {
   const { setNodeRef, attributes, listeners, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: columnId(column._id),
     data: { type: 'column' },
@@ -161,13 +170,20 @@ export const ColumnView: React.FC<ColumnViewProps> = ({ column, tasks, onRename,
       >
         <div className="space-y-3">
           {tasks.map(t => (
-            <DraggableTask key={t._id} task={t} />
+            <DraggableTask key={t._id} task={t} onOpen={onOpenTask} />
           ))}
           {!tasks.length && (
             <p className="rounded-lg border border-dashed border-slate-300 bg-white/40 p-3 text-xs text-slate-400">
               Arrastra tareas aquí
             </p>
           )}
+          <button
+            type="button"
+            onClick={() => onCreateTask(column._id)}
+            className="flex w-full items-center justify-center rounded-xl border border-dashed border-indigo-200 bg-white/60 px-3 py-2 text-sm font-medium text-indigo-600 transition hover:border-indigo-300 hover:text-indigo-700"
+          >
+            + Nueva tarea
+          </button>
         </div>
       </SortableContext>
     </div>

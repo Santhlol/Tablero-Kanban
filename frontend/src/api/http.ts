@@ -28,6 +28,11 @@ export const ColumnsAPI = {
 export const TasksAPI = {
   byBoard: (boardId: string) => http.get<Task[]>(`/tasks/board/${boardId}`).then(r => r.data),
   create: (payload: Omit<Task, '_id'>) => http.post<Task>('/tasks', payload).then(r => r.data),
+  update: (
+    id: string,
+    payload: Partial<Pick<Task, 'title' | 'description' | 'assignee'>>,
+  ) => http.patch<Task>(`/tasks/${id}`, payload).then(r => r.data),
   move: (id: string, payload: { columnId: string; position: number }) =>
     http.patch<Task>(`/tasks/${id}/move`, payload).then(r => r.data),
+  remove: (id: string) => http.delete(`/tasks/${id}`).then(r => r.data),
 };

@@ -9,6 +9,8 @@ import { ColumnView } from './Column';
 import { columnId, isTaskId, isColumnId, rawId } from '../dnd/utils';
 import { computeNewPosition } from '../dnd/utils';
 import type { BoardSummary } from '../types/board';
+import type { Task } from '../store/board';
+import { TaskModal, type TaskFormValues } from './TaskModal';
 
 type BoardPageProps = {
   board: BoardSummary;
@@ -26,6 +28,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     upsertColumn,
     updateColumn,
     removeColumn,
+    upsertTask,
+    removeTask,
   } = useBoard();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +37,13 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [taskModal, setTaskModal] = useState<
+    | { mode: 'create'; columnId: string }
+    | { mode: 'edit'; task: Task }
+    | null
+  >(null);
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
   useRealtimeBoard(boardId);
 
   useEffect(() => {
@@ -174,6 +185,143 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   };
 
   const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
+  const sortedTasksByColumn = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const [key, list] of Object.entries(tasksByColumn)) {
+      map[key] = [...list].sort((a, b) => a.position - b.position);
+    }
+    return map;
+  }, [tasksByColumn]);
+
+  const getColumnTasks = (columnId: string, excludeId?: string) => {
+    const list = sortedTasksByColumn[columnId] || [];
+    return excludeId ? list.filter(task => task._id !== excludeId) : list;
+  };
+
+  const closeTaskModal = () => {
+    setTaskError(null);
+    setTaskModal(null);
+  };
+
+  const handleCreateTaskRequest = (columnId: string) => {
+    setTaskError(null);
+    setTaskModal({ mode: 'create', columnId });
+  };
+
+  const handleOpenTask = (task: Task) => {
+    setTaskError(null);
+    setTaskModal({ mode: 'edit', task });
+  };
+
+  const computePlacementPosition = (
+    columnId: string,
+    placement: 'start' | 'end',
+    excludeId?: string,
+  ) => {
+    const list = getColumnTasks(columnId, excludeId);
+    const index = placement === 'start' ? 0 : list.length;
+    const before = placement === 'end' ? list[list.length - 1]?.position : undefined;
+    const after = placement === 'start' ? list[0]?.position : undefined;
+    return computeNewPosition(list.length, index, before, after);
+  };
+
+  const handleSubmitTask = async (values: TaskFormValues) => {
+    if (!taskModal) return;
+    const columnExists = sortedColumns.some(col => col._id === values.columnId);
+    if (!columnExists) {
+      setTaskError('La columna seleccionada ya no existe. Actualiza la página.');
+      return;
+    }
+
+    const cleanTitle = values.title.trim();
+    const cleanDescription = values.description.trim();
+    const cleanAssignee = values.assignee.trim();
+
+    if (!cleanTitle) {
+      setTaskError('El título es obligatorio.');
+      return;
+    }
+
+    setTaskBusy(true);
+    setTaskError(null);
+
+    if (taskModal.mode === 'create') {
+      try {
+        const placement = values.placement === 'start' ? 'start' : 'end';
+        const position = computePlacementPosition(values.columnId, placement);
+        const created = await TasksAPI.create({
+          boardId,
+          columnId: values.columnId,
+          title: cleanTitle,
+          description: cleanDescription ? cleanDescription : undefined,
+          assignee: cleanAssignee ? cleanAssignee : undefined,
+          position,
+        });
+        upsertTask(created);
+        closeTaskModal();
+      } catch (err) {
+        console.error('Create task failed', err);
+        setTaskError('No se pudo crear la tarea. Intenta nuevamente.');
+      } finally {
+        setTaskBusy(false);
+      }
+      return;
+    }
+
+    const originalTask = taskModal.task;
+
+    try {
+      const updated = await TasksAPI.update(originalTask._id, {
+        title: cleanTitle,
+        description: cleanDescription ? cleanDescription : undefined,
+        assignee: cleanAssignee ? cleanAssignee : undefined,
+      });
+      if (updated) {
+        upsertTask(updated);
+      }
+
+      const columnChanged = values.columnId !== originalTask.columnId;
+      const placementChanged = values.placement !== 'keep';
+
+      if (columnChanged || placementChanged) {
+        const placement = values.placement === 'keep' ? 'end' : values.placement;
+        const position = computePlacementPosition(values.columnId, placement, originalTask._id);
+        const moved = await TasksAPI.move(originalTask._id, {
+          columnId: values.columnId,
+          position,
+        });
+        removeTask(originalTask._id, originalTask.columnId);
+        if (moved) {
+          upsertTask(moved);
+        }
+      }
+
+      closeTaskModal();
+    } catch (err) {
+      console.error('Update task failed', err);
+      setTaskError('No se pudo guardar la tarea. Intenta de nuevo.');
+    } finally {
+      setTaskBusy(false);
+    }
+  };
+
+  const handleDeleteTask = async () => {
+    if (!taskModal || taskModal.mode !== 'edit') return;
+    if (!confirm('¿Seguro que deseas eliminar esta tarea?')) return;
+    const task = taskModal.task;
+    setTaskBusy(true);
+    setTaskError(null);
+    try {
+      await TasksAPI.remove(task._id);
+      removeTask(task._id, task.columnId);
+      closeTaskModal();
+    } catch (err) {
+      console.error('Delete task failed', err);
+      setTaskError('No se pudo eliminar la tarea. Intenta nuevamente.');
+    } finally {
+      setTaskBusy(false);
+    }
+  };
 
   const handleCreateColumn = async (evt: React.FormEvent) => {
     evt.preventDefault();
@@ -316,9 +464,11 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
                         <ColumnView
                           key={col._id}
                           column={col}
-                          tasks={(tasksByColumn[col._id] || []).slice().sort((a,b)=>a.position-b.position)}
+                          tasks={sortedTasksByColumn[col._id] || []}
                           onRename={handleRenameColumn}
                           onDelete={handleDeleteColumn}
+                          onCreateTask={handleCreateTaskRequest}
+                          onOpenTask={handleOpenTask}
                         />
                       ))}
                     </SortableContext>
@@ -383,6 +533,36 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
           )}
         </main>
       </div>
+      {taskModal && sortedColumns.length > 0 && (
+        <TaskModal
+          mode={taskModal.mode}
+          columns={sortedColumns}
+          initialValues={
+            taskModal.mode === 'create'
+              ? {
+                  title: '',
+                  description: '',
+                  assignee: '',
+                  columnId:
+                    sortedColumns.find(col => col._id === taskModal.columnId)?._id || sortedColumns[0]._id,
+                  placement: 'end',
+                }
+              : {
+                  title: taskModal.task.title,
+                  description: taskModal.task.description || '',
+                  assignee: taskModal.task.assignee || '',
+                  columnId:
+                    sortedColumns.find(col => col._id === taskModal.task.columnId)?._id || sortedColumns[0]._id,
+                  placement: 'keep',
+                }
+          }
+          busy={taskBusy}
+          error={taskError}
+          onClose={closeTaskModal}
+          onSubmit={handleSubmitTask}
+          onDelete={taskModal.mode === 'edit' ? handleDeleteTask : undefined}
+        />
+      )}
     </div>
   );
 };
