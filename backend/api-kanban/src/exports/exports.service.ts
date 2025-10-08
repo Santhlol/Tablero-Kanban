@@ -13,7 +13,7 @@ import { BoardsService } from '../boards/boards.service';
 import { KanbanGateway } from '../realtime/realtime.gateway';
 import { RealtimeEvents } from '../realtime/realtime.gateway.types';
 import { RequestExportDto, ExportField, EXPORTABLE_FIELDS } from './dto/request-export.dto';
-import { ExportFinalStatus, ReportStatusDto } from './dto/report-status.dto';
+import { ExportFinalStatus, ReportStatusDto, normalizeReportedStatus } from './dto/report-status.dto';
 
 export type ExportStatus = 'pending' | 'success' | 'error';
 
@@ -195,7 +195,9 @@ export class ExportsService {
       state.fields = dto.fields;
     }
 
-    if (dto.status === ExportFinalStatus.Success) {
+    const finalStatus = normalizeReportedStatus(dto.status);
+
+    if (finalStatus === ExportFinalStatus.Success) {
       this.markAs(state, 'success');
     } else {
       this.markAs(state, 'error', dto.error || 'La exportación falló.');

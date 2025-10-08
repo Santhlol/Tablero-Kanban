@@ -85,6 +85,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
   >(null);
   const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
   const exportPollTimeout = useRef<number | null>(null);
+  const exportPollAttempts = useRef(0);
 
   useEffect(() => {
     if (!isRenaming) {
@@ -160,6 +161,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       window.clearTimeout(exportPollTimeout.current);
       exportPollTimeout.current = null;
     }
+    exportPollAttempts.current = 0;
   }, []);
 
   useEffect(() => () => clearExportPolling(), [clearExportPolling]);
@@ -174,6 +176,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     }
 
     let cancelled = false;
+    exportPollAttempts.current = 0;
 
     const pollStatus = async () => {
       try {
@@ -181,7 +184,18 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
         if (cancelled) return;
         setLastExport(status);
         if (status.status === 'pending') {
-          exportPollTimeout.current = window.setTimeout(pollStatus, 4000);
+          exportPollAttempts.current += 1;
+          if (exportPollAttempts.current >= 15) {
+            clearExportPolling();
+            setExportNotice({
+              type: 'error',
+              message:
+                'La exportación sigue en curso. Revisa tu correo más tarde o vuelve a intentarlo en unos minutos.',
+            });
+            return;
+          }
+          const nextDelay = Math.min(4000 + exportPollAttempts.current * 1000, 10000);
+          exportPollTimeout.current = window.setTimeout(pollStatus, nextDelay);
           return;
         }
         if (status.status === 'success') {
