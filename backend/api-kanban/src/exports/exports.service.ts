@@ -1,4 +1,10 @@
-import { Injectable, InternalServerErrorException, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -14,7 +20,7 @@ export type ExportStatus = 'pending' | 'success' | 'error';
 export type ExportPayload = {
   requestId: string;
   boardId: string;
-  email: string;
+  to: string;
   fields: ExportField[];
   status: ExportStatus;
   requestedAt: string;
@@ -25,7 +31,7 @@ export type ExportPayload = {
 type ExportRequestState = {
   requestId: string;
   boardId: string;
-  email: string;
+  to: string;
   fields: ExportField[];
   status: ExportStatus;
   requestedAt: Date;
@@ -65,7 +71,7 @@ export class ExportsService {
     return {
       requestId: state.requestId,
       boardId: state.boardId,
-      email: state.email,
+      to: state.to,
       fields: state.fields,
       status: state.status,
       requestedAt: state.requestedAt.toISOString(),
@@ -91,10 +97,16 @@ export class ExportsService {
   async requestExport(dto: RequestExportDto) {
     const board = await this.boards.findOne(dto.boardId);
     const fields = dto.fields?.length ? dto.fields : [...EXPORTABLE_FIELDS];
+    const recipient = dto.email ?? dto.to;
+    if (!recipient) {
+      const message = 'Debes proporcionar un correo de destino.';
+      this.logger.warn(`Export request without recipient for board ${dto.boardId}`);
+      throw new BadRequestException(message);
+    }
     const request: ExportRequestState = {
       requestId: randomUUID(),
       boardId: dto.boardId,
-      email: dto.email,
+      to: recipient,
       fields,
       status: 'pending',
       requestedAt: new Date(),
@@ -114,7 +126,8 @@ export class ExportsService {
       requestId: request.requestId,
       board: { id: board._id, name: board.name, owner: board.owner },
       boardId: dto.boardId,
-      email: dto.email,
+      email: recipient,
+      to: recipient,
       fields,
       callbackUrl: this.getCallbackUrl(),
       requestedAt: request.requestedAt.toISOString(),
@@ -140,7 +153,7 @@ export class ExportsService {
       throw new InternalServerErrorException('No se pudo iniciar la exportación del backlog.');
     }
 
-    this.realtime.emitToBoard(dto.boardId, RealtimeEvents.ExportRequested, this.serialize(request));
+    this.markAs(request, 'pending');
     return this.serialize(request);
   }
 
@@ -164,7 +177,7 @@ export class ExportsService {
     const state: ExportRequestState = existing ?? {
       requestId: dto.requestId,
       boardId: dto.boardId,
-      email: dto.email ?? '',
+      to: dto.email ?? dto.to ?? '',
       fields: dto.fields?.length ? dto.fields : [...EXPORTABLE_FIELDS],
       status: 'pending',
       requestedAt: new Date(),
@@ -174,7 +187,10 @@ export class ExportsService {
       this.requests.set(state.requestId, state);
     }
 
-    state.email = dto.email ?? state.email;
+    const recipient = dto.email ?? dto.to;
+    if (recipient) {
+      state.to = recipient;
+    }
     if (dto.fields?.length) {
       state.fields = dto.fields;
     }

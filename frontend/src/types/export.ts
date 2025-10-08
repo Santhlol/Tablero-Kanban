@@ -5,7 +5,7 @@ export type ExportStatusValue = 'pending' | 'success' | 'error';
 export type ExportRecord = {
   requestId: string;
   boardId: string;
-  email: string;
+  to: string;
   fields: ExportField[];
   status: ExportStatusValue;
   requestedAt: string;
