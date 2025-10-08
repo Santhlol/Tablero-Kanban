@@ -31,6 +31,22 @@
 $ npm install
 ```
 
+## Configuración de exportaciones de backlog
+
+El servicio expone un endpoint `POST /api/export/backlog/status` que recibe el resultado del flujo de n8n. De forma predeterminada
+la API notificará a n8n que utilice la ruta relativa `/api/export/backlog/status` como `callbackUrl`. Si estás ejecutando n8n en un
+contenedor diferente asegúrate de que pueda resolver `http://host.docker.internal:3000`; en caso contrario define la variable de
+entorno `EXPORT_CALLBACK_URL` con la URL absoluta que deba usar n8n.
+
+Variables relevantes:
+
+| Variable                | Descripción                                                                 |
+| ----------------------- | --------------------------------------------------------------------------- |
+| `N8N_EXPORT_WEBHOOK_URL` | URL del webhook de n8n que dispara la exportación.                           |
+| `N8N_EXPORT_WEBHOOK_TOKEN` | Token Bearer opcional para proteger el webhook.                            |
+| `EXPORT_CALLBACK_URL`   | URL absoluta donde n8n reportará el estado de la exportación. Valor por defecto `/api/export/backlog/status`. |
+| `EXPORT_STATUS_TOKEN`   | Token opcional que debe incluir n8n en `x-export-token` al reportar el estado. |
+
 ## Compile and run the project
 
 ```bash
