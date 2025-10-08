@@ -60,7 +60,9 @@ export class ExportsService {
   }
 
   private getCallbackUrl() {
-    return this.config.get<string>('EXPORT_CALLBACK_URL');
+    const configured = this.config.get<string>('EXPORT_CALLBACK_URL')?.trim();
+    if (configured) return configured;
+    return '/api/export/backlog/status';
   }
 
   private getStatusToken() {
