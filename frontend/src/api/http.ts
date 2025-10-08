@@ -42,7 +42,7 @@ export const TasksAPI = {
 };
 
 export const ExportAPI = {
-  requestBacklog: (payload: { boardId: string; email: string; fields?: ExportField[] }) =>
+  requestBacklog: (payload: { boardId: string; to: string; fields?: ExportField[] }) =>
     http.post<ExportRecord>('/export/backlog', payload).then(r => r.data),
   status: (requestId: string) =>
     http.get<ExportRecord>(`/export/backlog/${requestId}`).then(r => r.data),

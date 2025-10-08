@@ -1,4 +1,14 @@
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateIf,
+} from 'class-validator';
 import { ExportField } from './request-export.dto';
 
 export enum ExportFinalStatus {
@@ -18,9 +28,13 @@ export class ReportStatusDto {
   @IsEnum(ExportFinalStatus)
   status!: ExportFinalStatus;
 
-  @IsOptional()
+  @ValidateIf(dto => !dto.to)
   @IsEmail()
   email?: string;
+
+  @ValidateIf(dto => !dto.email)
+  @IsEmail()
+  to?: string;
 
   @IsOptional()
   @IsArray()

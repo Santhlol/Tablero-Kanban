@@ -113,7 +113,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       setLastExport(current => (current && current.requestId === payload.requestId ? { ...current, ...payload } : payload));
       setExportNotice({
         type: 'info',
-        message: `Exportación solicitada. Enviaremos el CSV a ${payload.email}.`,
+        message: `Exportación solicitada. Enviaremos el CSV a ${payload.to}.`,
       });
     },
     [boardId],
@@ -125,7 +125,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       setLastExport(payload);
       setExportNotice({
         type: 'success',
-        message: `Exportación completada. Revisa tu correo (${payload.email}).`,
+        message: `Exportación completada. Revisa tu correo (${payload.to}).`,
       });
     },
     [boardId],
@@ -376,13 +376,13 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     try {
       const response = await ExportAPI.requestBacklog({
         boardId,
-        email: cleanEmail,
+        to: cleanEmail,
         fields: selectedFields,
       });
       setLastExport(response);
       setExportNotice({
         type: 'info',
-        message: `Exportación solicitada. Enviaremos el CSV a ${response.email}.`,
+        message: `Exportación solicitada. Enviaremos el CSV a ${response.to}.`,
       });
       setShowExportPanel(false);
     } catch (err) {
