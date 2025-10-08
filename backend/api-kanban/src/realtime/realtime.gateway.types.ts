@@ -9,4 +9,7 @@ export enum RealtimeEvents {
     ColumnCreated = 'column.created',
     ColumnUpdated = 'column.updated',
     ColumnDeleted = 'column.deleted',
-}   
+    ExportRequested = 'export.requested',
+    ExportCompleted = 'export.completed',
+    ExportFailed = 'export.failed',
+}

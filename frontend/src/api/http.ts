@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { BoardSummary } from '../types/board';
 import type { Column, Task } from '../store/board';
+import type { ExportField, ExportRecord } from '../types/export';
 
 export const http = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
@@ -38,4 +39,11 @@ export const TasksAPI = {
   move: (id: string, payload: { columnId: string; position: number }) =>
     http.patch<Task>(`/tasks/${id}/move`, payload).then(r => r.data),
   remove: (id: string) => http.delete(`/tasks/${id}`).then(r => r.data),
+};
+
+export const ExportAPI = {
+  requestBacklog: (payload: { boardId: string; email: string; fields?: ExportField[] }) =>
+    http.post<ExportRecord>('/export/backlog', payload).then(r => r.data),
+  status: (requestId: string) =>
+    http.get<ExportRecord>(`/export/backlog/${requestId}`).then(r => r.data),
 };

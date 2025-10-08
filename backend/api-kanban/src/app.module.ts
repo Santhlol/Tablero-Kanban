@@ -5,6 +5,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { BoardsModule } from './boards/boards.module';
 import { ColumnsModule } from './columns/columns.module';
 import { TasksModule } from './tasks/tasks.module';
+import { ExportsModule } from './exports/exports.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { TasksModule } from './tasks/tasks.module';
     BoardsModule,
     ColumnsModule,
     TasksModule,
+    ExportsModule,
   ],
 })
 export class AppModule {}

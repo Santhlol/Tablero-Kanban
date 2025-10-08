@@ -3,6 +3,9 @@ import { socket } from '../lib/socket';
 import type { Column, Task } from '../store/board';
 import { useBoard } from '../store/board';
 import type { BoardSummary } from '../types/board';
+import type { ExportRecord } from '../types/export';
+
+type BoardDeletedPayload = { id: string };
 
 type BoardDeletedPayload = { id: string };
 
@@ -11,6 +14,9 @@ type UseRealtimeBoardOptions = {
   onBoardCreated?: (board: BoardSummary) => void;
   onBoardUpdated?: (board: BoardSummary) => void;
   onBoardDeleted?: (payload: BoardDeletedPayload) => void;
+  onExportRequested?: (payload: ExportRecord) => void;
+  onExportCompleted?: (payload: ExportRecord) => void;
+  onExportFailed?: (payload: ExportRecord) => void;
 };
 
 export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
@@ -19,6 +25,9 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
   const onBoardCreated = typeof options === 'object' ? options.onBoardCreated : undefined;
   const onBoardUpdated = typeof options === 'object' ? options.onBoardUpdated : undefined;
   const onBoardDeleted = typeof options === 'object' ? options.onBoardDeleted : undefined;
+  const onExportRequested = typeof options === 'object' ? options.onExportRequested : undefined;
+  const onExportCompleted = typeof options === 'object' ? options.onExportCompleted : undefined;
+  const onExportFailed = typeof options === 'object' ? options.onExportFailed : undefined;
   
   const { upsertTask, removeTask, setBoardId, upsertColumn, removeColumn } = useBoard();
 
@@ -52,6 +61,22 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
       }
     };
 
+    const onExportRequestedEvent = (payload: ExportRecord) => {
+      if (onExportRequested) {
+        onExportRequested(payload);
+      }
+    };
+    const onExportCompletedEvent = (payload: ExportRecord) => {
+      if (onExportCompleted) {
+        onExportCompleted(payload);
+      }
+    };
+    const onExportFailedEvent = (payload: ExportRecord) => {
+      if (onExportFailed) {
+        onExportFailed(payload);
+      }
+    };
+
     // Always listen to task and column events (they're board-specific)
     if (boardId) {
       socket.on('task.created', onTaskCreated);
@@ -61,6 +86,9 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
       socket.on('column.created', onColumnCreated);
       socket.on('column.updated', onColumnUpdated);
       socket.on('column.deleted', onColumnDeleted);
+      socket.on('export.requested', onExportRequestedEvent);
+      socket.on('export.completed', onExportCompletedEvent);
+      socket.on('export.failed', onExportFailedEvent);
     }
 
     // Listen to global board events if callback is provided
@@ -84,6 +112,9 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
         socket.off('column.created', onColumnCreated);
         socket.off('column.updated', onColumnUpdated);
         socket.off('column.deleted', onColumnDeleted);
+        socket.off('export.requested', onExportRequestedEvent);
+        socket.off('export.completed', onExportCompletedEvent);
+        socket.off('export.failed', onExportFailedEvent);
       }
       
       if (onBoardCreated) {
@@ -106,5 +137,8 @@ export function useRealtimeBoard(options: UseRealtimeBoardOptions | string) {
     onBoardCreated,
     onBoardUpdated,
     onBoardDeleted,
+    onExportRequested,
+    onExportCompleted,
+    onExportFailed,
   ]);
 }

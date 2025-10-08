@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
-import { BoardsAPI, ColumnsAPI, TasksAPI } from '../api/http';
+import { BoardsAPI, ColumnsAPI, TasksAPI, ExportAPI } from '../api/http';
 import { useBoard } from '../store/board';
 import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 import { ColumnView } from './Column';
@@ -13,6 +13,23 @@ import type { Task } from '../store/board';
 import { TaskModal, type TaskFormValues } from './TaskModal';
 import { ColumnForm } from './ColumnForm';
 import { TaskCard } from './TaskCard';
+import type { ExportField, ExportRecord } from '../types/export';
+
+const DEFAULT_EXPORT_FIELDS: ExportField[] = ['id', 'title', 'description', 'column', 'createdAt'];
+
+const EXPORT_FIELD_LABELS: Record<ExportField, { label: string; description: string }> = {
+  id: { label: 'ID de tarea', description: 'Identificador único de la tarjeta.' },
+  title: { label: 'Título', description: 'Nombre visible de la tarea.' },
+  description: { label: 'Descripción', description: 'Detalle o notas de la tarjeta.' },
+  column: { label: 'Columna', description: 'Estado actual dentro del tablero.' },
+  createdAt: { label: 'Fecha de creación', description: 'Cuándo se generó la tarea.' },
+};
+
+const EXPORT_NOTICE_STYLES = {
+  info: 'border-sky-200 bg-sky-50 text-sky-700',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-red-200 bg-red-50 text-red-600',
+} as const;
 
 type BoardPageProps = {
   board: BoardSummary;
@@ -57,6 +74,16 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
   const [boardActionError, setBoardActionError] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+  const [showExportPanel, setShowExportPanel] = useState(false);
+  const [exportEmail, setExportEmail] = useState('');
+  const [selectedFields, setSelectedFields] = useState<ExportField[]>(DEFAULT_EXPORT_FIELDS);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportFormError, setExportFormError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<
+    | { type: 'info' | 'success' | 'error'; message: string }
+    | null
+  >(null);
+  const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
 
   useEffect(() => {
     if (!isRenaming) {
@@ -80,10 +107,51 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     [boardId, onBoardDeleted],
   );
 
+  const handleExportRequested = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(current => (current && current.requestId === payload.requestId ? { ...current, ...payload } : payload));
+      setExportNotice({
+        type: 'info',
+        message: `Exportación solicitada. Enviaremos el CSV a ${payload.email}.`,
+      });
+    },
+    [boardId],
+  );
+
+  const handleExportCompleted = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(payload);
+      setExportNotice({
+        type: 'success',
+        message: `Exportación completada. Revisa tu correo (${payload.email}).`,
+      });
+    },
+    [boardId],
+  );
+
+  const handleExportFailed = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(payload);
+      setExportNotice({
+        type: 'error',
+        message: payload.error
+          ? `La exportación falló: ${payload.error}`
+          : 'La exportación del backlog no pudo completarse.',
+      });
+    },
+    [boardId],
+  );
+
   useRealtimeBoard({
     boardId,
     onBoardUpdated: handleRealtimeBoardUpdated,
     onBoardDeleted: handleRealtimeBoardDeleted,
+    onExportRequested: handleExportRequested,
+    onExportCompleted: handleExportCompleted,
+    onExportFailed: handleExportFailed,
   });
 
   useEffect(() => {
@@ -97,6 +165,13 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     setCreateError(null);
     setQuickTaskError(null);
     setQuickTaskBusy(false);
+    setShowExportPanel(false);
+    setExportEmail('');
+    setSelectedFields(DEFAULT_EXPORT_FIELDS);
+    setExportFormError(null);
+    setExportBusy(false);
+    setExportNotice(null);
+    setLastExport(null);
 
     (async () => {
       try {
@@ -259,6 +334,63 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
   const onDragCancel = () => {
     setActiveTaskId(null);
     setActiveColumnId(null);
+  };
+
+  const toggleFieldSelection = (field: ExportField) => {
+    setSelectedFields(current =>
+      current.includes(field)
+        ? current.filter(item => item !== field)
+        : [...current, field],
+    );
+  };
+
+  const handleCancelExport = () => {
+    setShowExportPanel(false);
+    setExportFormError(null);
+    setExportBusy(false);
+  };
+
+  const handleExportSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (exportBusy) return;
+
+    const cleanEmail = exportEmail.trim();
+    if (!cleanEmail) {
+      setExportFormError('Ingresa un correo de destino.');
+      return;
+    }
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(cleanEmail)) {
+      setExportFormError('Proporciona un correo electrónico válido.');
+      return;
+    }
+
+    if (!selectedFields.length) {
+      setExportFormError('Selecciona al menos un campo para exportar.');
+      return;
+    }
+
+    setExportBusy(true);
+    setExportFormError(null);
+
+    try {
+      const response = await ExportAPI.requestBacklog({
+        boardId,
+        email: cleanEmail,
+        fields: selectedFields,
+      });
+      setLastExport(response);
+      setExportNotice({
+        type: 'info',
+        message: `Exportación solicitada. Enviaremos el CSV a ${response.email}.`,
+      });
+      setShowExportPanel(false);
+    } catch (err) {
+      console.error('Request export failed', err);
+      setExportFormError('No se pudo solicitar la exportación. Intenta nuevamente.');
+    } finally {
+      setExportBusy(false);
+    }
   };
 
   const createQuickTask = async () => {
@@ -593,6 +725,96 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
             >
               + Tarea rápida
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExportPanel(prev => !prev);
+                  setExportFormError(null);
+                  setExportBusy(false);
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2"
+              >
+                Exportar backlog
+              </button>
+              {showExportPanel && (
+                <form
+                  onSubmit={handleExportSubmit}
+                  className="absolute right-0 z-30 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xl"
+                >
+                  <h3 className="mb-3 text-sm font-semibold text-slate-900">Enviar backlog por correo</h3>
+                  <label className="mb-3 block text-sm font-medium text-slate-700">
+                    Correo de destino
+                    <input
+                      type="email"
+                      value={exportEmail}
+                      onChange={event => {
+                        setExportEmail(event.target.value);
+                        setExportFormError(null);
+                      }}
+                      disabled={exportBusy}
+                      placeholder="persona@empresa.com"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                    />
+                  </label>
+                  <fieldset className="mb-3">
+                    <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Campos a incluir
+                    </legend>
+                    <div className="flex max-h-36 flex-col gap-2 overflow-y-auto pr-1">
+                      {DEFAULT_EXPORT_FIELDS.map(field => {
+                        const meta = EXPORT_FIELD_LABELS[field];
+                        const checked = selectedFields.includes(field);
+                        return (
+                          <label
+                            key={field}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 text-sm text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50/60"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleFieldSelection(field)}
+                              disabled={exportBusy}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                            />
+                            <span>
+                              <span className="font-semibold text-slate-900">{meta.label}</span>
+                              <span className="block text-xs text-slate-500">{meta.description}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                  {exportFormError && (
+                    <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                      {exportFormError}
+                    </p>
+                  )}
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCancelExport}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={exportBusy}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-emerald-200"
+                    >
+                      {exportBusy ? 'Enviando…' : 'Solicitar exportación'}
+                    </button>
+                  </div>
+                  {lastExport && lastExport.status === 'pending' && (
+                    <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                      Última solicitud en curso: {new Date(lastExport.requestedAt).toLocaleString()}
+                    </p>
+                  )}
+                </form>
+              )}
+            </div>
             <button
               type="button"
               onClick={handleDeleteBoard}
@@ -606,6 +828,14 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
 
         {boardActionError && (
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{boardActionError}</p>
+        )}
+
+        {exportNotice && (
+          <p
+            className={`rounded-xl border px-4 py-2 text-sm shadow-sm ${EXPORT_NOTICE_STYLES[exportNotice.type]}`}
+          >
+            {exportNotice.message}
+          </p>
         )}
 
         {quickTaskError && (
