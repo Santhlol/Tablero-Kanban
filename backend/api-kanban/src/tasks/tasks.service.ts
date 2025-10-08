@@ -33,6 +33,9 @@ export class TasksService {
 
   move(id: string, dto: MoveTaskDto) {
     return this.model.findByIdAndUpdate(id, dto, { new: true }).then(doc => {
+      // La notificación en tiempo real mantiene sincronizados a todos los clientes
+      // conectados al tablero enviando el evento del movimiento únicamente si la
+      // actualización fue exitosa.
       if (doc) this.events.emitToBoard(String(doc.boardId), RealtimeEvents.TaskMoved, doc);
       return doc;
     });
@@ -40,6 +43,8 @@ export class TasksService {
 
   remove(id: string) {
     return this.model.findByIdAndDelete(id).then(doc => {
+      // Emitimos la eliminación para que cada cliente pueda retirar el task del
+      // tablero sin necesidad de refrescar la página ni volver a consultar la API.
       if (doc) this.events.emitToBoard(String(doc.boardId), RealtimeEvents.TaskDeleted, { id, columnId: doc.columnId });
       return doc;
     });
