@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
@@ -84,6 +84,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     | null
   >(null);
   const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
+  const exportPollTimeout = useRef<number | null>(null);
+  const exportPollAttempts = useRef(0);
 
   useEffect(() => {
     if (!isRenaming) {
@@ -113,7 +115,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       setLastExport(current => (current && current.requestId === payload.requestId ? { ...current, ...payload } : payload));
       setExportNotice({
         type: 'info',
-        message: `Exportación solicitada. Enviaremos el CSV a ${payload.email}.`,
+        message: `Exportación solicitada. Enviaremos el CSV a ${payload.to}.`,
       });
     },
     [boardId],
@@ -125,7 +127,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
       setLastExport(payload);
       setExportNotice({
         type: 'success',
-        message: `Exportación completada. Revisa tu correo (${payload.email}).`,
+        message: `Exportación completada. Revisa tu correo (${payload.to}).`,
       });
     },
     [boardId],
@@ -153,6 +155,76 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     onExportCompleted: handleExportCompleted,
     onExportFailed: handleExportFailed,
   });
+
+  const clearExportPolling = useCallback(() => {
+    if (exportPollTimeout.current !== null) {
+      window.clearTimeout(exportPollTimeout.current);
+      exportPollTimeout.current = null;
+    }
+    exportPollAttempts.current = 0;
+  }, []);
+
+  useEffect(() => () => clearExportPolling(), [clearExportPolling]);
+
+  const pendingExportId = lastExport?.requestId ?? null;
+  const pendingExportStatus = lastExport?.status ?? null;
+
+  useEffect(() => {
+    if (!pendingExportId || pendingExportStatus !== 'pending') {
+      clearExportPolling();
+      return;
+    }
+
+    let cancelled = false;
+    exportPollAttempts.current = 0;
+
+    const pollStatus = async () => {
+      try {
+        const status = await ExportAPI.status(pendingExportId);
+        if (cancelled) return;
+        setLastExport(status);
+        if (status.status === 'pending') {
+          exportPollAttempts.current += 1;
+          if (exportPollAttempts.current >= 15) {
+            clearExportPolling();
+            setExportNotice({
+              type: 'error',
+              message:
+                'La exportación sigue en curso. Revisa tu correo más tarde o vuelve a intentarlo en unos minutos.',
+            });
+            return;
+          }
+          const nextDelay = Math.min(4000 + exportPollAttempts.current * 1000, 10000);
+          exportPollTimeout.current = window.setTimeout(pollStatus, nextDelay);
+          return;
+        }
+        if (status.status === 'success') {
+          setExportNotice({
+            type: 'success',
+            message: `Exportación completada. Revisa tu correo (${status.to}).`,
+          });
+        } else {
+          setExportNotice({
+            type: 'error',
+            message: status.error
+              ? `La exportación falló: ${status.error}`
+              : 'La exportación del backlog no pudo completarse.',
+          });
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Polling export status failed', err);
+        exportPollTimeout.current = window.setTimeout(pollStatus, 6000);
+      }
+    };
+
+    exportPollTimeout.current = window.setTimeout(pollStatus, 4000);
+
+    return () => {
+      cancelled = true;
+      clearExportPolling();
+    };
+  }, [pendingExportId, pendingExportStatus, clearExportPolling]);
 
   useEffect(() => {
     let alive = true;
@@ -376,13 +448,13 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     try {
       const response = await ExportAPI.requestBacklog({
         boardId,
-        email: cleanEmail,
+        to: cleanEmail,
         fields: selectedFields,
       });
       setLastExport(response);
       setExportNotice({
         type: 'info',
-        message: `Exportación solicitada. Enviaremos el CSV a ${response.email}.`,
+        message: `Exportación solicitada. Enviaremos el CSV a ${response.to}.`,
       });
       setShowExportPanel(false);
     } catch (err) {
