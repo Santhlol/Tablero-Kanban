@@ -53,7 +53,8 @@
           "id": "Ri4SkOnKvIyRCNF0",
           "name": "SMTP account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -130,6 +131,39 @@
       ],
       "id": "8ae50716-e52a-40ec-b97f-b3a539e26406",
       "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhookNode = $node['Webhook (Export Backlog)'].json ?? {};\nconst webhook = webhookNode.body ?? webhookNode;\nconst webhookQuery = webhookNode.query ?? {};\nconst webhookHeaders = webhookNode.headers ?? {};\nconst transformed = ($node['Code'].item?.json ?? {});\nconst current = $json ?? {};\n\nconst firstError = current.error ?? current.message ?? current.description ?? current.errorMessage;\nlet errorMessage = null;\nif (firstError) {\n  if (typeof firstError === 'string') {\n    errorMessage = firstError;\n  } else if (typeof firstError.message === 'string') {\n    errorMessage = firstError.message;\n  } else if (typeof firstError.description === 'string') {\n    errorMessage = firstError.description;\n  } else if (typeof firstError.data === 'string') {\n    errorMessage = firstError.data;\n  } else if (firstError.data?.message) {\n    errorMessage = firstError.data.message;\n  } else {\n    try {\n      errorMessage = JSON.stringify(firstError);\n    } catch (error) {\n      errorMessage = 'Error desconocido al enviar el correo.';\n    }\n  }\n}\n\nlet callbackUrl = transformed.callbackUrl ?? webhook.callbackUrl ?? webhookNode.callbackUrl ?? webhookQuery.callbackUrl;\nif (!callbackUrl) {\n  const headerCallback = webhookHeaders['x-export-callback'] ?? webhookHeaders['X-Export-Callback'];\n  if (typeof headerCallback === 'string' && headerCallback.trim()) {\n    callbackUrl = headerCallback.trim();\n  }\n}\n\nif (!callbackUrl) {\n  const message = 'No se recibió callbackUrl desde el webhook de exportación. Se omite el reporte de estado.';\n  console.warn(message);\n  return [];\n}\n\nconst requestId = transformed.requestId ?? webhook.requestId ?? webhookQuery.requestId;\nconst boardId = transformed.boardId ?? webhook.boardId ?? webhook.board?.id ?? webhookQuery.boardId;\nconst recipient = transformed.to ?? webhook.to ?? webhook.email ?? webhookQuery.to ?? '';\nconst email = webhook.email ?? transformed.email ?? recipient;\nconst fields = Array.isArray(transformed.fields) && transformed.fields.length\n  ? transformed.fields\n  : Array.isArray(webhook.fields) && webhook.fields.length\n    ? webhook.fields\n    : Array.isArray(webhookQuery.fields) && webhookQuery.fields.length\n      ? webhookQuery.fields\n      : [];\n\nconst payload = {\n  requestId,\n  boardId,\n  status: errorMessage ? 'error' : 'success',\n  to: recipient,\n  email,\n};\n\nif (fields.length) {\n  payload.fields = fields;\n}\nif (errorMessage) {\n  payload.error = errorMessage;\n}\n\nconst headers = {};\nconst statusToken = transformed.statusToken ?? webhook.statusToken ?? webhook.exportStatusToken ?? webhookHeaders['x-export-token'] ?? webhookHeaders['X-Export-Token'];\nif (statusToken) {\n  headers['x-export-token'] = statusToken;\n}\n\nreturn [{ json: { callbackUrl, payload: JSON.stringify(payload), headers } }];\n"
+      },
+      "id": "ac3a6b5e-1e2c-4b2e-9a9b-0fcb45d1f0f1",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "jsonParameters": true,
+        "bodyParametersJson": "={{ $json.payload }}",
+        "options": {
+          "bodyContentType": "json"
+        },
+        "headerParametersJson": "={{ $json.headers ?? {} }}"
+      },
+      "id": "3e9f7c54-6cbf-4e7b-9e2e-4da46c474f2a",
+      "name": "Report Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1820,
+        40
+      ]
     }
   ],
   "pinData": {},
@@ -207,7 +241,13 @@
     },
     "Send Email": {
       "main": [
-        []
+        [
+          {
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Split Out": {
@@ -219,6 +259,22 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Report Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Status": {
+      "main": [
+        []
       ]
     }
   },
