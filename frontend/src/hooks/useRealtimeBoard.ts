@@ -7,6 +7,8 @@ import type { ExportRecord } from '../types/export';
 
 type BoardDeletedPayload = { id: string };
 
+type BoardDeletedPayload = { id: string };
+
 type UseRealtimeBoardOptions = {
   boardId?: string;
   onBoardCreated?: (board: BoardSummary) => void;
