@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
@@ -84,6 +84,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     | null
   >(null);
   const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
+  const exportPollTimeout = useRef<number | null>(null);
 
   useEffect(() => {
     if (!isRenaming) {
@@ -153,6 +154,63 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpda
     onExportCompleted: handleExportCompleted,
     onExportFailed: handleExportFailed,
   });
+
+  const clearExportPolling = useCallback(() => {
+    if (exportPollTimeout.current !== null) {
+      window.clearTimeout(exportPollTimeout.current);
+      exportPollTimeout.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearExportPolling(), [clearExportPolling]);
+
+  const pendingExportId = lastExport?.requestId ?? null;
+  const pendingExportStatus = lastExport?.status ?? null;
+
+  useEffect(() => {
+    if (!pendingExportId || pendingExportStatus !== 'pending') {
+      clearExportPolling();
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const status = await ExportAPI.status(pendingExportId);
+        if (cancelled) return;
+        setLastExport(status);
+        if (status.status === 'pending') {
+          exportPollTimeout.current = window.setTimeout(pollStatus, 4000);
+          return;
+        }
+        if (status.status === 'success') {
+          setExportNotice({
+            type: 'success',
+            message: `Exportación completada. Revisa tu correo (${status.to}).`,
+          });
+        } else {
+          setExportNotice({
+            type: 'error',
+            message: status.error
+              ? `La exportación falló: ${status.error}`
+              : 'La exportación del backlog no pudo completarse.',
+          });
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Polling export status failed', err);
+        exportPollTimeout.current = window.setTimeout(pollStatus, 6000);
+      }
+    };
+
+    exportPollTimeout.current = window.setTimeout(pollStatus, 4000);
+
+    return () => {
+      cancelled = true;
+      clearExportPolling();
+    };
+  }, [pendingExportId, pendingExportStatus, clearExportPolling]);
 
   useEffect(() => {
     let alive = true;
