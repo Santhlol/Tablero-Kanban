@@ -7,13 +7,13 @@
         "path": "export-backlog",
         "options": {}
       },
-      "id": "e8671be6-e4bc-45aa-bacd-bd69e4da903e",
+      "id": "9bdac867-e0bc-42ad-8bc5-887a6c65a203",
       "name": "Webhook (Export Backlog)",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        40,
-        20
+        3220,
+        160
       ],
       "webhookId": "327a791c-6a3d-4740-ab7e-c3688cc83b8d"
     },
@@ -21,13 +21,13 @@
       "parameters": {
         "options": {}
       },
-      "id": "b28aa9b3-3c8d-4442-b1e0-832461bd8c77",
+      "id": "ce9a0fe2-8c0c-4b49-b3f4-5df8708b996c",
       "name": "Convert to File (CSV)",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1,
       "position": [
-        1180,
-        40
+        4360,
+        180
       ]
     },
     {
@@ -40,13 +40,13 @@
           "attachments": "=data"
         }
       },
-      "id": "0acfc986-964c-4469-b377-1b176fe86b28",
+      "id": "000d2c1f-f865-439f-b963-ca5784a0d558",
       "name": "Send Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2,
       "position": [
-        1400,
-        40
+        4580,
+        180
       ],
       "credentials": {
         "smtp": {
@@ -63,10 +63,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        760,
-        40
+        3940,
+        180
       ],
-      "id": "1392f67e-d740-43f1-9bec-4cd9d9e48ef4",
+      "id": "f3eed90e-a730-46d5-9a88-c36dfcc74aff",
       "name": "Code"
     },
     {
@@ -78,13 +78,13 @@
           }
         }
       },
-      "id": "7b52413f-15fc-43db-9b5d-5ac7dfc89ac2",
+      "id": "3df13012-0143-49d1-80db-4414e056f171",
       "name": "Tasks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        340,
-        -100
+        3520,
+        40
       ],
       "alwaysOutputData": true
     },
@@ -97,13 +97,13 @@
           }
         }
       },
-      "id": "499f08fb-c132-41ad-96ed-be5420244036",
+      "id": "08748712-e195-4bee-bd50-db860c6d19a2",
       "name": "Columns",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        340,
-        140
+        3520,
+        280
       ],
       "alwaysOutputData": true
     },
@@ -112,10 +112,10 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [
-        540,
-        40
+        3720,
+        180
       ],
-      "id": "dcb6da09-d2ff-4fe9-9368-c432e0a580a8",
+      "id": "b1b0e7b8-0970-4231-9e7b-88d7a579defa",
       "name": "Merge"
     },
     {
@@ -126,66 +126,11 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        980,
-        40
+        4160,
+        180
       ],
-      "id": "8ae50716-e52a-40ec-b97f-b3a539e26406",
+      "id": "ce7aae33-08e3-4ee5-a475-a75f0e3eab02",
       "name": "Split Out"
-    },
-    {
-      "parameters": {
-        "jsCode": "const webhookNode = $node['Webhook (Export Backlog)'].json ?? {}\nconst webhook = webhookNode.body ?? webhookNode\nconst webhookQuery = webhookNode.query ?? {}\nconst webhookHeaders = webhookNode.headers ?? {}\nconst codeItems = $items('Code')\nconst transformed = codeItems.length ? (codeItems[0].json ?? {}) : {}\nconst current = $json ?? {}\n\nconst firstError = current.error ?? current.message ?? current.description ?? current.errorMessage\nlet errorMessage = null\nif (firstError) {\n  if (typeof firstError === 'string') {\n    errorMessage = firstError\n  } else if (typeof firstError.message === 'string') {\n    errorMessage = firstError.message\n  } else if (typeof firstError.description === 'string') {\n    errorMessage = firstError.description\n  } else if (typeof firstError.data === 'string') {\n    errorMessage = firstError.data\n  } else if (firstError.data?.message) {\n    errorMessage = firstError.data.message\n  } else {\n    try {\n      errorMessage = JSON.stringify(firstError)\n    } catch (error) {\n      errorMessage = 'Error desconocido al enviar el correo.'\n    }\n  }\n}\n\nconst takeFirst = (...values) => {\n  for (const value of values) {\n    if (!value) continue\n    if (typeof value === 'string' && value.trim()) {\n      return value.trim()\n    }\n  }\n  return undefined\n}\n\nlet callbackUrl = takeFirst(\n  transformed.callbackUrl,\n  webhook.callbackUrl,\n  webhookNode.callbackUrl,\n  webhookQuery.callbackUrl,\n  webhookHeaders['x-export-callback'],\n  webhookHeaders['X-Export-Callback'],\n) ?? ''\ncallbackUrl = callbackUrl.trim()\n\nconst warnings = []\n\nconst resolveCallback = (rawUrl) => {\n  if (!rawUrl) return ''\n  try {\n    return new URL(rawUrl).toString()\n  } catch (error) {\n    const bases = []\n    const protoHeader = takeFirst(\n      webhookHeaders['x-export-proto'],\n      webhookHeaders['x-forwarded-proto'],\n      webhookHeaders['x-forwarded-protocol'],\n    )\n    const hostHeader = takeFirst(\n      webhookHeaders['x-export-host'],\n      webhookHeaders['x-forwarded-host'],\n      webhookHeaders['host'],\n    )\n    if (protoHeader && hostHeader) {\n      bases.push(`${protoHeader.replace(/:$/, '')}://${hostHeader}`)\n    } else if (hostHeader) {\n      bases.push(`https://${hostHeader}`)\n      bases.push(`http://${hostHeader}`)\n    }\n\n    const headerBase = takeFirst(\n      webhookHeaders['x-export-base'],\n      webhookHeaders['origin'],\n      webhookHeaders['referer'],\n    )\n    if (headerBase) bases.push(headerBase)\n\n    const inferredBackend = takeFirst(\n      transformed.backendBase,\n      webhook.backendBase,\n      webhookNode.backendBase,\n      webhookQuery.backendBase,\n    )\n    if (inferredBackend) bases.push(inferredBackend)\n\n    bases.push('http://host.docker.internal:3000')\n\n    for (const base of bases) {\n      try {\n        return new URL(rawUrl, base).toString()\n      } catch (error) {\n        continue\n      }\n    }\n  }\n  return ''\n}\n\nconst resolvedCallbackUrl = resolveCallback(callbackUrl)\nif (!resolvedCallbackUrl) {\n  if (callbackUrl) {\n    warnings.push(`callbackUrl recibido no es válido: ${callbackUrl}`)\n  } else {\n    warnings.push('No se recibió callbackUrl desde el webhook de exportación.')\n  }\n}\n\nconst requestId = takeFirst(transformed.requestId, webhook.requestId, webhookQuery.requestId)\nconst boardId = takeFirst(transformed.boardId, webhook.boardId, webhook.board?.id, webhookQuery.boardId)\nconst recipient = takeFirst(transformed.to, webhook.to, webhook.email, webhookQuery.to) ?? ''\nconst email = takeFirst(webhook.email, transformed.email, recipient)\nconst fields = Array.isArray(transformed.fields) && transformed.fields.length\n  ? transformed.fields\n  : Array.isArray(webhook.fields) && webhook.fields.length\n    ? webhook.fields\n    : Array.isArray(webhookQuery.fields) && webhookQuery.fields.length\n      ? webhookQuery.fields\n      : []\n\nconst payload = {\n  requestId,\n  boardId,\n  status: errorMessage ? 'error' : 'success',\n  to: recipient,\n  email,\n}\n\nif (fields.length) {\n  payload.fields = fields\n}\nif (errorMessage) {\n  payload.error = errorMessage\n}\n\nconst headers = {}\nconst statusToken = takeFirst(\n  transformed.statusToken,\n  webhook.statusToken,\n  webhook.exportStatusToken,\n  webhookHeaders['x-export-token'],\n  webhookHeaders['X-Export-Token'],\n)\nif (statusToken) {\n  headers['x-export-token'] = statusToken\n}\n\nif (warnings.length) {\n  console.warn(warnings.join(' '))\n}\n\nreturn [{ json: { callbackUrl: resolvedCallbackUrl, payload, headers, warnings } }]\n"
-      },
-      "id": "ac3a6b5e-1e2c-4b2e-9a9b-0fcb45d1f0f1",
-      "name": "Prepare Callback",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1600,
-        40
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $json.callbackUrl }}",
-        "jsonParameters": true,
-        "bodyParametersJson": "={{ $json.payload }}",
-        "options": {
-          "bodyContentType": "json",
-          "response": {
-            "responseFormat": "json"
-          }
-        },
-        "headerParametersJson": "={{ $json.headers ?? {} }}"
-      },
-      "id": "3e9f7c54-6cbf-4e7b-9e2e-4da46c474f2a",
-      "name": "Report Status",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        2040,
-        40
-      ]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{ !!$json.callbackUrl }}"
-            }
-          ]
-        }
-      },
-      "id": "b5aa6f75-6a0d-4d1d-9c42-137eeb9d6aa1",
-      "name": "Has Callback?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1820,
-        40
-      ]
     }
   ],
   "pinData": {},
@@ -263,13 +208,7 @@
     },
     "Send Email": {
       "main": [
-        [
-          {
-            "node": "Prepare Callback",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Split Out": {
@@ -282,44 +221,16 @@
           }
         ]
       ]
-    },
-    "Prepare Callback": {
-      "main": [
-        [
-          {
-            "node": "Has Callback?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Report Status": {
-      "main": [
-        []
-      ]
-    },
-    "Has Callback?": {
-      "main": [
-        [
-          {
-            "node": "Report Status",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "dbd65003-44fb-498f-940a-aa770352338c",
+  "versionId": "05908f7b-5877-4907-8e52-f67a58c53c61",
   "meta": {
     "instanceId": "8ad819edb6ae3566ddf500c65127f2178271e61e969bbddc6cd26f05239d3cbe"
   },
-  "id": "G8vzfJFY48SFKwp5",
+  "id": "856uqo6QwuSOnwaa",
   "tags": []
 }

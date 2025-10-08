@@ -17,8 +17,8 @@ export function computeNewPosition(
 ): number {
   if (before !== undefined && after !== undefined) {
     const mid = (before + after) / 2;
-    if (Number.isInteger(mid)) return mid; // lucky
-    return Math.floor(mid); // aproxima (suficiente para demo)
+    if (Number.isInteger(mid)) return mid;
+    return Math.floor(mid); 
   }
   if (after !== undefined) return Math.max(0, after - 10);
   if (before !== undefined) return before + 10;
