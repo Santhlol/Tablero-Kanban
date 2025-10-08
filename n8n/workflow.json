@@ -1,0 +1,235 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "export-backlog",
+        "options": {}
+      },
+      "id": "e8671be6-e4bc-45aa-bacd-bd69e4da903e",
+      "name": "Webhook (Export Backlog)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        40,
+        20
+      ],
+      "webhookId": "327a791c-6a3d-4740-ab7e-c3688cc83b8d"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "b28aa9b3-3c8d-4442-b1e0-832461bd8c77",
+      "name": "Convert to File (CSV)",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "santhenao4@gmail.com",
+        "toEmail": "={{ $('Code').item.json.to }}",
+        "subject": "=Exportación backlog – Board {{ $('Code').item.json.boardId }}",
+        "text": "Adjunto encontrarás el CSV exportado del tablero.\n",
+        "options": {
+          "attachments": "=data"
+        }
+      },
+      "id": "0acfc986-964c-4469-b377-1b176fe86b28",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        40
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "Ri4SkOnKvIyRCNF0",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Payload original (en test suele venir en body)\nconst req =\n  $node[\"Webhook (Export Backlog)\"].json?.body ??\n  $json?.body ??\n  $json ?? {};\n\n// Toma TODOS los items de los nodos por nombre (no solo el primero)\nconst tasks = $items(\"Tasks\").map(i => i.json);\nconst cols  = $items(\"Columns\").map(i => i.json);\n\nif (!tasks.length) {\n  throw new Error('No se recibieron tareas desde \"Tasks\". Ejecuta ese nodo primero o revisa la URL.');\n}\n\n// Deduplicar columnas por _id y mapear id -> título\nconst colMap = new Map();\nfor (const c of cols) {\n  const k = String(c._id ?? c.id ?? \"\");\n  if (!k) continue;\n  if (!colMap.has(k)) colMap.set(k, c.title ?? c.name ?? \"\");\n}\n\n// Construir filas\nconst rows = tasks.map(t => ({\n  id: String(t._id ?? t.id ?? \"\"),\n  title: t.title ?? \"\",\n  description: t.description ?? \"\",\n  column: colMap.get(String(t.columnId ?? t.column ?? \"\")) ?? String(t.columnId ?? t.column ?? \"\"),\n  createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : \"\",\n}));\n\n// Campos a exportar (opcional desde req.fields)\nconst fields = Array.isArray(req.fields) && req.fields.length\n  ? req.fields\n  : [\"id\", \"title\", \"description\", \"column\", \"createdAt\"];\n\n// Filtrar columnas\nconst filtered = rows.map(r => {\n  const o = {};\n  for (const f of fields) o[f] = r[f] ?? \"\";\n  return o;\n});\n\n// Salida para Convert to File (CSV)\nreturn [{\n  json: {\n    to: req.to,\n    boardId: req.boardId,\n    fields,\n    rows: filtered,\n    filename: `backlog-${req.boardId}-${new Date().toISOString().slice(0,10)}.csv`,\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        40
+      ],
+      "id": "1392f67e-d740-43f1-9bec-4cd9d9e48ef4",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "url": "=http://host.docker.internal:3000/api/tasks/board/{{$json.body.boardId}}\n",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "id": "7b52413f-15fc-43db-9b5d-5ac7dfc89ac2",
+      "name": "Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        340,
+        -100
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "=http://host.docker.internal:3000/api/columns/board/{{$json.body.boardId}}",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "id": "499f08fb-c132-41ad-96ed-be5420244036",
+      "name": "Columns",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        340,
+        140
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        540,
+        40
+      ],
+      "id": "dcb6da09-d2ff-4fe9-9368-c432e0a580a8",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "rows",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        980,
+        40
+      ],
+      "id": "8ae50716-e52a-40ec-b97f-b3a539e26406",
+      "name": "Split Out"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook (Export Backlog)": {
+      "main": [
+        [
+          {
+            "node": "Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Columns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File (CSV)": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tasks": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Columns": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        []
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Convert to File (CSV)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "dbd65003-44fb-498f-940a-aa770352338c",
+  "meta": {
+    "instanceId": "8ad819edb6ae3566ddf500c65127f2178271e61e969bbddc6cd26f05239d3cbe"
+  },
+  "id": "G8vzfJFY48SFKwp5",
+  "tags": []
+}
