@@ -32,7 +32,7 @@
     },
     {
       "parameters": {
-        "fromEmail": "santhenao4@gmail.com",
+        "fromEmail": "={{ $env.N8N_EMAIL_FROM }}",
         "toEmail": "={{ $('Code').item.json.to }}",
         "subject": "=Exportación backlog – Board {{ $('Code').item.json.boardId }}",
         "text": "Adjunto encontrarás el CSV exportado del tablero.\n",
@@ -71,7 +71,7 @@
     },
     {
       "parameters": {
-        "url": "=http://host.docker.internal:3000/api/tasks/board/{{$json.body.boardId}}\n",
+        "url": "={{ $env.KANBAN_API_URL ?? 'http://host.docker.internal:3000/api' }}/tasks/board/{{$json.body.boardId}}",
         "options": {
           "redirect": {
             "redirect": {}
@@ -90,7 +90,7 @@
     },
     {
       "parameters": {
-        "url": "=http://host.docker.internal:3000/api/columns/board/{{$json.body.boardId}}",
+        "url": "={{ $env.KANBAN_API_URL ?? 'http://host.docker.internal:3000/api' }}/columns/board/{{$json.body.boardId}}",
         "options": {
           "redirect": {
             "redirect": {}
