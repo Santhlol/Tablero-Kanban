@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
-import { ColumnsAPI, TasksAPI } from '../api/http';
+import { BoardsAPI, ColumnsAPI, TasksAPI, ExportAPI } from '../api/http';
 import { useBoard } from '../store/board';
 import { useRealtimeBoard } from '../hooks/useRealtimeBoard';
 import { ColumnView } from './Column';
@@ -11,13 +11,34 @@ import { computeNewPosition } from '../dnd/utils';
 import type { BoardSummary } from '../types/board';
 import type { Task } from '../store/board';
 import { TaskModal, type TaskFormValues } from './TaskModal';
+import { ColumnForm } from './ColumnForm';
+import { TaskCard } from './TaskCard';
+import type { ExportField, ExportRecord } from '../types/export';
+
+const DEFAULT_EXPORT_FIELDS: ExportField[] = ['id', 'title', 'description', 'column', 'createdAt'];
+
+const EXPORT_FIELD_LABELS: Record<ExportField, { label: string; description: string }> = {
+  id: { label: 'ID de tarea', description: 'Identificador único de la tarjeta.' },
+  title: { label: 'Título', description: 'Nombre visible de la tarea.' },
+  description: { label: 'Descripción', description: 'Detalle o notas de la tarjeta.' },
+  column: { label: 'Columna', description: 'Estado actual dentro del tablero.' },
+  createdAt: { label: 'Fecha de creación', description: 'Cuándo se generó la tarea.' },
+};
+
+const EXPORT_NOTICE_STYLES = {
+  info: 'border-sky-200 bg-sky-50 text-sky-700',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  error: 'border-red-200 bg-red-50 text-red-600',
+} as const;
 
 type BoardPageProps = {
   board: BoardSummary;
   onBack: () => void;
+  onBoardUpdate: (board: BoardSummary) => void;
+  onBoardDeleted: (boardId: string) => void;
 };
 
-export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
+export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack, onBoardUpdate, onBoardDeleted }) => {
   const boardId = board._id;
   const {
     columns,
@@ -37,6 +58,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [creatingColumn, setCreatingColumn] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [quickTaskBusy, setQuickTaskBusy] = useState(false);
+  const [quickTaskError, setQuickTaskError] = useState<string | null>(null);
   const [taskModal, setTaskModal] = useState<
     | { mode: 'create'; columnId: string }
     | { mode: 'edit'; task: Task }
@@ -44,7 +67,92 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   >(null);
   const [taskBusy, setTaskBusy] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
-  useRealtimeBoard(boardId);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(board.name);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [boardActionError, setBoardActionError] = useState<string | null>(null);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+  const [showExportPanel, setShowExportPanel] = useState(false);
+  const [exportEmail, setExportEmail] = useState('');
+  const [selectedFields, setSelectedFields] = useState<ExportField[]>(DEFAULT_EXPORT_FIELDS);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportFormError, setExportFormError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<
+    | { type: 'info' | 'success' | 'error'; message: string }
+    | null
+  >(null);
+  const [lastExport, setLastExport] = useState<ExportRecord | null>(null);
+
+  useEffect(() => {
+    if (!isRenaming) {
+      setRenameValue(board.name);
+    }
+  }, [board.name, isRenaming]);
+
+  const handleRealtimeBoardUpdated = useCallback(
+    (updated: BoardSummary) => {
+      if (updated._id !== boardId) return;
+      onBoardUpdate(updated);
+    },
+    [boardId, onBoardUpdate],
+  );
+
+  const handleRealtimeBoardDeleted = useCallback(
+    (payload: { id: string }) => {
+      if (payload.id !== boardId) return;
+      onBoardDeleted(boardId);
+    },
+    [boardId, onBoardDeleted],
+  );
+
+  const handleExportRequested = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(current => (current && current.requestId === payload.requestId ? { ...current, ...payload } : payload));
+      setExportNotice({
+        type: 'info',
+        message: `Exportación solicitada. Enviaremos el CSV a ${payload.email}.`,
+      });
+    },
+    [boardId],
+  );
+
+  const handleExportCompleted = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(payload);
+      setExportNotice({
+        type: 'success',
+        message: `Exportación completada. Revisa tu correo (${payload.email}).`,
+      });
+    },
+    [boardId],
+  );
+
+  const handleExportFailed = useCallback(
+    (payload: ExportRecord) => {
+      if (payload.boardId !== boardId) return;
+      setLastExport(payload);
+      setExportNotice({
+        type: 'error',
+        message: payload.error
+          ? `La exportación falló: ${payload.error}`
+          : 'La exportación del backlog no pudo completarse.',
+      });
+    },
+    [boardId],
+  );
+
+  useRealtimeBoard({
+    boardId,
+    onBoardUpdated: handleRealtimeBoardUpdated,
+    onBoardDeleted: handleRealtimeBoardDeleted,
+    onExportRequested: handleExportRequested,
+    onExportCompleted: handleExportCompleted,
+    onExportFailed: handleExportFailed,
+  });
 
   useEffect(() => {
     let alive = true;
@@ -55,6 +163,15 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     setIsAddingColumn(false);
     setNewColumnTitle('');
     setCreateError(null);
+    setQuickTaskError(null);
+    setQuickTaskBusy(false);
+    setShowExportPanel(false);
+    setExportEmail('');
+    setSelectedFields(DEFAULT_EXPORT_FIELDS);
+    setExportFormError(null);
+    setExportBusy(false);
+    setExportNotice(null);
+    setLastExport(null);
 
     (async () => {
       try {
@@ -82,6 +199,32 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
   }, [boardId, setColumns, setTasks]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
+  const sortedTasksByColumn = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const [key, list] of Object.entries(tasksByColumn)) {
+      map[key] = [...list].sort((a, b) => a.position - b.position);
+    }
+    return map;
+  }, [tasksByColumn]);
+
+  const resetColumnForm = () => {
+    setIsAddingColumn(false);
+    setNewColumnTitle('');
+    setCreateError(null);
+  };
+
+  const onDragStart = (event: DragStartEvent) => {
+    const activeId = String(event.active.id);
+    if (isTaskId(activeId)) {
+      setActiveTaskId(rawId(activeId));
+      setActiveColumnId(null);
+    } else if (isColumnId(activeId)) {
+      setActiveColumnId(rawId(activeId));
+      setActiveTaskId(null);
+    }
+  };
 
   const onDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -117,6 +260,8 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
         console.error('Move column failed', err);
         setColumns(ordered);
       }
+      setActiveColumnId(null);
+      setActiveTaskId(null);
       return;
     }
 
@@ -182,27 +327,116 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
       // o mostrar un toast de error.
       console.error('Move failed', err);
     }
+    setActiveTaskId(null);
+    setActiveColumnId(null);
+  };
+
+  const onDragCancel = () => {
+    setActiveTaskId(null);
+    setActiveColumnId(null);
+  };
+
+  const toggleFieldSelection = (field: ExportField) => {
+    setSelectedFields(current =>
+      current.includes(field)
+        ? current.filter(item => item !== field)
+        : [...current, field],
+    );
+  };
+
+  const handleCancelExport = () => {
+    setShowExportPanel(false);
+    setExportFormError(null);
+    setExportBusy(false);
+  };
+
+  const handleExportSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (exportBusy) return;
+
+    const cleanEmail = exportEmail.trim();
+    if (!cleanEmail) {
+      setExportFormError('Ingresa un correo de destino.');
+      return;
+    }
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(cleanEmail)) {
+      setExportFormError('Proporciona un correo electrónico válido.');
+      return;
+    }
+
+    if (!selectedFields.length) {
+      setExportFormError('Selecciona al menos un campo para exportar.');
+      return;
+    }
+
+    setExportBusy(true);
+    setExportFormError(null);
+
+    try {
+      const response = await ExportAPI.requestBacklog({
+        boardId,
+        email: cleanEmail,
+        fields: selectedFields,
+      });
+      setLastExport(response);
+      setExportNotice({
+        type: 'info',
+        message: `Exportación solicitada. Enviaremos el CSV a ${response.email}.`,
+      });
+      setShowExportPanel(false);
+    } catch (err) {
+      console.error('Request export failed', err);
+      setExportFormError('No se pudo solicitar la exportación. Intenta nuevamente.');
+    } finally {
+      setExportBusy(false);
+    }
   };
 
   const createQuickTask = async () => {
-    const firstColumn = columns[0];
-    if (!firstColumn) return;
-    await TasksAPI.create({
+    const firstColumn = sortedColumns[0];
+    if (!firstColumn) {
+      setQuickTaskError('Crea una columna antes de agregar tareas.');
+      return;
+    }
+
+    const existingTasks = [...(sortedTasksByColumn[firstColumn._id] || [])];
+    const before = existingTasks[existingTasks.length - 1]?.position;
+    const position = computeNewPosition(existingTasks.length, existingTasks.length, before, undefined);
+    const tempId = `temp-${Date.now()}`;
+    const optimisticTask: Task = {
+      _id: tempId,
       boardId,
       columnId: firstColumn._id,
       title: 'Nueva tarea',
-      position: (tasksByColumn[firstColumn._id]?.length || 0) * 10,
-    });
-  };
+      position,
+    };
 
-  const sortedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns]);
-  const sortedTasksByColumn = useMemo(() => {
-    const map: Record<string, Task[]> = {};
-    for (const [key, list] of Object.entries(tasksByColumn)) {
-      map[key] = [...list].sort((a, b) => a.position - b.position);
+    setQuickTaskBusy(true);
+    setQuickTaskError(null);
+    upsertTask(optimisticTask);
+
+    try {
+      const created = await TasksAPI.create({
+        boardId,
+        columnId: firstColumn._id,
+        title: 'Nueva tarea',
+        position,
+      });
+      removeTask(tempId, firstColumn._id);
+      if (created) {
+        upsertTask(created);
+      } else {
+        setQuickTaskError('No se pudo crear la tarea rápida. Intenta nuevamente.');
+      }
+    } catch (err) {
+      console.error('Quick create task failed', err);
+      removeTask(tempId, firstColumn._id);
+      setQuickTaskError('No se pudo crear la tarea rápida. Intenta nuevamente.');
+    } finally {
+      setQuickTaskBusy(false);
     }
-    return map;
-  }, [tasksByColumn]);
+  };
 
   const getColumnTasks = (columnId: string, excludeId?: string) => {
     const list = sortedTasksByColumn[columnId] || [];
@@ -334,6 +568,63 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     }
   };
 
+  const startRenaming = () => {
+    setBoardActionError(null);
+    setRenameValue(board.name);
+    setIsRenaming(true);
+  };
+
+  const cancelRenaming = () => {
+    setBoardActionError(null);
+    setIsRenaming(false);
+    setRenameValue(board.name);
+  };
+
+  const handleRenameSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setBoardActionError('El título del tablero no puede estar vacío.');
+      return;
+    }
+    if (nextName === board.name) {
+      setIsRenaming(false);
+      return;
+    }
+
+    setBoardActionError(null);
+    setRenameBusy(true);
+    try {
+      const updated = await BoardsAPI.update(boardId, { name: nextName });
+      onBoardUpdate(updated);
+      setIsRenaming(false);
+      setRenameValue(nextName);
+    } catch (err) {
+      console.error('Rename board failed', err);
+      setBoardActionError('No se pudo renombrar el tablero. Intenta nuevamente.');
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
+  const handleDeleteBoard = async () => {
+    if (deleteBusy) return;
+    if (!confirm('¿Seguro que deseas eliminar este tablero? Esta acción no se puede deshacer.')) {
+      return;
+    }
+    setBoardActionError(null);
+    setDeleteBusy(true);
+    try {
+      await BoardsAPI.remove(boardId);
+      onBoardDeleted(boardId);
+    } catch (err) {
+      console.error('Delete board failed', err);
+      setBoardActionError('No se pudo eliminar el tablero. Intenta nuevamente.');
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   const handleCreateColumn = async (evt: React.FormEvent) => {
     evt.preventDefault();
     const title = newColumnTitle.trim();
@@ -347,8 +638,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
     try {
       const created = await ColumnsAPI.create({ boardId, title, position });
       upsertColumn(created);
-      setIsAddingColumn(false);
-      setNewColumnTitle('');
+      resetColumnForm();
     } catch (err) {
       console.error('Create column failed', err);
       setCreateError('No se pudo crear la columna. Intenta nuevamente.');
@@ -382,20 +672,175 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
             >
               <span aria-hidden>←</span> Todos los tableros
             </button>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
-              <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              {isRenaming ? (
+                <form onSubmit={handleRenameSubmit} className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={renameValue}
+                    onChange={event => setRenameValue(event.target.value)}
+                    disabled={renameBusy}
+                    autoFocus
+                    className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-lg font-semibold text-slate-900 shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={renameBusy}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+                    >
+                      {renameBusy ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelRenaming}
+                      disabled={renameBusy}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-2xl font-semibold text-slate-900">{board.name}</h1>
+                  <button
+                    type="button"
+                    onClick={startRenaming}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:border-indigo-300 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2"
+                  >
+                    Editar título
+                  </button>
+                </div>
+              )}
             </div>
+            <p className="text-sm text-slate-500">Propietario: {board.owner}</p>
           </div>
-          <button
-            type="button"
-            onClick={createQuickTask}
-            disabled={!columns.length}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
-          >
-            + Tarea rápida
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={createQuickTask}
+              disabled={!columns.length || quickTaskBusy || deleteBusy}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-indigo-200"
+            >
+              + Tarea rápida
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExportPanel(prev => !prev);
+                  setExportFormError(null);
+                  setExportBusy(false);
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2"
+              >
+                Exportar backlog
+              </button>
+              {showExportPanel && (
+                <form
+                  onSubmit={handleExportSubmit}
+                  className="absolute right-0 z-30 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-xl"
+                >
+                  <h3 className="mb-3 text-sm font-semibold text-slate-900">Enviar backlog por correo</h3>
+                  <label className="mb-3 block text-sm font-medium text-slate-700">
+                    Correo de destino
+                    <input
+                      type="email"
+                      value={exportEmail}
+                      onChange={event => {
+                        setExportEmail(event.target.value);
+                        setExportFormError(null);
+                      }}
+                      disabled={exportBusy}
+                      placeholder="persona@empresa.com"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                    />
+                  </label>
+                  <fieldset className="mb-3">
+                    <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Campos a incluir
+                    </legend>
+                    <div className="flex max-h-36 flex-col gap-2 overflow-y-auto pr-1">
+                      {DEFAULT_EXPORT_FIELDS.map(field => {
+                        const meta = EXPORT_FIELD_LABELS[field];
+                        const checked = selectedFields.includes(field);
+                        return (
+                          <label
+                            key={field}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 text-sm text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50/60"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleFieldSelection(field)}
+                              disabled={exportBusy}
+                              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                            />
+                            <span>
+                              <span className="font-semibold text-slate-900">{meta.label}</span>
+                              <span className="block text-xs text-slate-500">{meta.description}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                  {exportFormError && (
+                    <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                      {exportFormError}
+                    </p>
+                  )}
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleCancelExport}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:border-slate-400 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={exportBusy}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white shadow-sm transition hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-emerald-200"
+                    >
+                      {exportBusy ? 'Enviando…' : 'Solicitar exportación'}
+                    </button>
+                  </div>
+                  {lastExport && lastExport.status === 'pending' && (
+                    <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                      Última solicitud en curso: {new Date(lastExport.requestedAt).toLocaleString()}
+                    </p>
+                  )}
+                </form>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleDeleteBoard}
+              disabled={deleteBusy}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 shadow-sm transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {deleteBusy ? 'Eliminando...' : 'Eliminar tablero'}
+            </button>
+          </div>
         </header>
+
+        {boardActionError && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{boardActionError}</p>
+        )}
+
+        {exportNotice && (
+          <p
+            className={`rounded-xl border px-4 py-2 text-sm shadow-sm ${EXPORT_NOTICE_STYLES[exportNotice.type]}`}
+          >
+            {exportNotice.message}
+          </p>
+        )}
+
+        {quickTaskError && (
+          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600 shadow-sm">{quickTaskError}</p>
+        )}
 
         <main className="flex-1">
           {error ? (
@@ -408,46 +853,18 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
             </div>
           ) : !sortedColumns.length ? (
             isAddingColumn ? (
-              <form
+              <ColumnForm
+                title={newColumnTitle}
+                error={createError}
+                busy={creatingColumn}
                 onSubmit={handleCreateColumn}
-                className="mx-auto flex w-full max-w-md flex-col gap-4 rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-6 text-sm shadow-sm"
-              >
-                <div className="space-y-3">
-                  <h2 className="text-base font-semibold text-indigo-700">Nueva columna</h2>
-                  <input
-                    value={newColumnTitle}
-                    onChange={event => setNewColumnTitle(event.target.value)}
-                    autoFocus
-                    placeholder="Nombre de la columna"
-                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    disabled={creatingColumn}
-                  />
-                  {createError && (
-                    <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
-                  )}
-                </div>
-                <div className="flex items-center justify-end gap-2 text-sm">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddingColumn(false);
-                      setNewColumnTitle('');
-                      setCreateError(null);
-                    }}
-                    className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
-                    disabled={creatingColumn}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={creatingColumn || !newColumnTitle.trim()}
-                    className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
-                  >
-                    Crear
-                  </button>
-                </div>
-              </form>
+                onCancel={resetColumnForm}
+                onTitleChange={value => {
+                  setNewColumnTitle(value);
+                  setCreateError(null);
+                }}
+                className="mx-auto w-full max-w-md p-6"
+              />
             ) : (
               <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-300 bg-white/70 p-10 text-sm text-slate-500">
                 <p>Aún no hay columnas en este tablero.</p>
@@ -456,6 +873,7 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
                   onClick={() => {
                     setIsAddingColumn(true);
                     setCreateError(null);
+                    setNewColumnTitle('');
                   }}
                   className="rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-600 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50"
                 >
@@ -464,73 +882,48 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
               </div>
             )
           ) : (
-            <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-                <div className="overflow-x-auto pb-4">
-                  <div className="flex items-start gap-4">
-                    <SortableContext
-                      items={sortedColumns.map(col => columnId(col._id))}
-                      strategy={horizontalListSortingStrategy}
-                    >
-                      {sortedColumns.map(col => (
-                        <ColumnView
-                          key={col._id}
-                          column={col}
-                          tasks={sortedTasksByColumn[col._id] || []}
-                          onRename={handleRenameColumn}
-                          onDelete={handleDeleteColumn}
-                          onCreateTask={handleCreateTaskRequest}
-                          onOpenTask={handleOpenTask}
-                        />
-                      ))}
-                    </SortableContext>
-                    <div className="w-72 flex-shrink-0">
+            <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
+              <div className="overflow-x-auto pb-4">
+                <div className="flex items-start gap-4">
+                  <SortableContext
+                    items={sortedColumns.map(col => columnId(col._id))}
+                    strategy={horizontalListSortingStrategy}
+                  >
+                    {sortedColumns.map(col => (
+                      <ColumnView
+                        key={col._id}
+                        column={col}
+                        tasks={sortedTasksByColumn[col._id] || []}
+                        onRename={handleRenameColumn}
+                        onDelete={handleDeleteColumn}
+                        onCreateTask={handleCreateTaskRequest}
+                        onOpenTask={handleOpenTask}
+                      />
+                    ))}
+                  </SortableContext>
+                  <div className="w-72 flex-shrink-0">
                     {isAddingColumn ? (
-                      <form
+                      <ColumnForm
+                        title={newColumnTitle}
+                        error={createError}
+                        busy={creatingColumn}
                         onSubmit={handleCreateColumn}
-                        className="flex h-full flex-col justify-between rounded-2xl border border-dashed border-indigo-300 bg-white/80 p-4 shadow-sm"
-                      >
-                        <div className="flex flex-col gap-3">
-                          <h2 className="text-sm font-semibold text-indigo-700">Nueva columna</h2>
-                          <input
-                            value={newColumnTitle}
-                            onChange={event => setNewColumnTitle(event.target.value)}
-                            autoFocus
-                            placeholder="Nombre de la columna"
-                            className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                            disabled={creatingColumn}
-                          />
-                          {createError && (
-                            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{createError}</p>
-                          )}
-                        </div>
-                        <div className="mt-4 flex items-center justify-end gap-2 text-sm">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsAddingColumn(false);
-                              setNewColumnTitle('');
-                              setCreateError(null);
-                            }}
-                            className="rounded-md px-3 py-1 font-medium text-slate-500 transition hover:text-slate-700"
-                            disabled={creatingColumn}
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={creatingColumn || !newColumnTitle.trim()}
-                            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-1 font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-200"
-                          >
-                            Crear
-                          </button>
-                        </div>
-                      </form>
+                        onCancel={resetColumnForm}
+                        onTitleChange={value => {
+                          setNewColumnTitle(value);
+                          setCreateError(null);
+                        }}
+                        className="h-full justify-between p-4"
+                        headingClassName="text-sm"
+                        footerClassName="mt-4"
+                      />
                     ) : (
                       <button
                         type="button"
                         onClick={() => {
                           setIsAddingColumn(true);
                           setCreateError(null);
+                          setNewColumnTitle('');
                         }}
                         className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white/60 p-6 text-sm font-semibold text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600"
                       >
@@ -540,6 +933,34 @@ export const BoardPage: React.FC<BoardPageProps> = ({ board, onBack }) => {
                   </div>
                 </div>
               </div>
+              <DragOverlay>
+                {activeTaskId ? (
+                  (() => {
+                    const task = Object.values(tasksByColumn)
+                      .flat()
+                      .find(t => t._id === activeTaskId);
+                    return task ? (
+                      <div className="w-72 cursor-grabbing">
+                        <TaskCard task={task} />
+                      </div>
+                    ) : null;
+                  })()
+                ) : activeColumnId ? (
+                  (() => {
+                    const column = columns.find(col => col._id === activeColumnId);
+                    if (!column) return null;
+                    const taskCount = (tasksByColumn[column._id] || []).length;
+                    return (
+                      <div className="w-72 rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-lg">
+                        <div className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                          {column.title}
+                        </div>
+                        <p className="text-xs text-slate-400">{taskCount} tarea{taskCount === 1 ? '' : 's'}</p>
+                      </div>
+                    );
+                  })()
+                ) : null}
+              </DragOverlay>
             </DndContext>
           )}
         </main>

@@ -1,5 +1,7 @@
-export enum RealtimeEvents {    
+export enum RealtimeEvents {
     BoardCreated = 'board.created',
+    BoardUpdated = 'board.updated',
+    BoardDeleted = 'board.deleted',
     TaskCreated = 'task.created',
     TaskUpdated = 'task.updated',
     TaskMoved = 'task.moved',
@@ -7,4 +9,7 @@ export enum RealtimeEvents {
     ColumnCreated = 'column.created',
     ColumnUpdated = 'column.updated',
     ColumnDeleted = 'column.deleted',
-}   
+    ExportRequested = 'export.requested',
+    ExportCompleted = 'export.completed',
+    ExportFailed = 'export.failed',
+}

@@ -11,7 +11,7 @@ export const rawId = (id: DndId) => id.split(':')[1];
 
 export function computeNewPosition(
   destListLength: number,
-  destIndex: number,
+  _destIndex: number,
   before?: number,
   after?: number
 ): number {
