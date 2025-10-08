@@ -147,12 +147,15 @@
     },
     {
       "parameters": {
-        "httpMethod": "POST",
+        "method": "POST",
         "url": "={{ $json.callbackUrl }}",
         "jsonParameters": true,
         "bodyParametersJson": "={{ $json.payload }}",
         "options": {
-          "bodyContentType": "json"
+          "bodyContentType": "json",
+          "response": {
+            "responseFormat": "json"
+          }
         },
         "headerParametersJson": "={{ $json.headers ?? {} }}"
       },
